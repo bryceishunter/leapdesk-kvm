@@ -22,12 +22,13 @@
 #include "platform/MSWindowsDropTarget.h"
 #include "client/Client.h"
 #include "platform/MSWindowsClipboard.h"
-#include "platform/MSWindowsClipboardFilesConverter.h"
+#include "platform/MSWindowsClipboardFiles.h"
 #include "platform/MSWindowsDesks.h"
 #include "platform/MSWindowsFilePaste.h"
 #include "platform/MSWindowsEventQueueBuffer.h"
 #include "platform/MSWindowsKeyState.h"
 #include "platform/MSWindowsScreenSaver.h"
+#include "platform/MSWindowsSessionUser.h"
 #include "platform/MSWindowsTaildrop.h"
 #include "inputleap/Clipboard.h"
 #include "inputleap/FileClip.h"
@@ -114,7 +115,6 @@ MSWindowsScreen::MSWindowsScreen(
     m_screensaverNotify(false),
     m_screensaverActive(false),
     m_window(nullptr),
-    m_nextClipboardWindow(nullptr),
     m_ownClipboard(false),
     m_desks(nullptr),
     m_keyState(nullptr),
@@ -180,6 +180,18 @@ MSWindowsScreen::MSWindowsScreen(
     // disconnected until enabled
     m_file_paste->set_connected(false);
 
+    // copied files are looked at as the signed-in user; say who that is
+    if (running_as_system()) {
+        std::string user = session_user_name();
+        if (user.empty()) {
+            LOG_NOTE("running as SYSTEM, and nobody is signed in yet");
+        }
+        else {
+            LOG_NOTE("running as SYSTEM; copied and pasted files are handled as %s",
+                     user.c_str());
+        }
+    }
+
     // install event handlers
     m_events->add_handler(EventType::SYSTEM, m_events->getSystemTarget(),
                           [this](const auto& e){ handle_system_event(e); });
@@ -243,8 +255,12 @@ MSWindowsScreen::enable()
     m_events->add_handler(EventType::TIMER, m_fixTimer,
                           [this](const auto& e){ handle_fixes(); });
 
-    // install our clipboard snooper
-    m_nextClipboardWindow = SetClipboardViewer(m_window);
+    // hear about clipboard changes.  a format listener is told directly,
+    // unlike a viewer in the old clipboard chain, which relied on every
+    // other viewer passing the news on
+    if (!AddClipboardFormatListener(m_window)) {
+        LOG_WARN("couldn't listen for clipboard changes: %d", GetLastError());
+    }
 
     // track the active desk and (re)install the hooks
     m_desks->enable();
@@ -289,9 +305,8 @@ MSWindowsScreen::disable()
     // tell key state
     m_keyState->disable();
 
-    // stop snooping the clipboard
-    ChangeClipboardChain(m_window, m_nextClipboardWindow);
-    m_nextClipboardWindow = nullptr;
+    // stop listening to the clipboard
+    RemoveClipboardFormatListener(m_window);
 
     // uninstall fix timer
     if (m_fixTimer != nullptr) {
@@ -450,13 +465,10 @@ MSWindowsScreen::checkClipboards()
     // grabbed the clipboard on this screen without us knowing.
     // tell the server that this screen grabbed the clipboard.
     //
-    // this works around bugs in the clipboard viewer chain.
-    // sometimes NT will simply never send WM_DRAWCLIPBOARD
-    // messages for no apparent reason and rebooting fixes the
-    // problem.  since we don't want a broken clipboard until the
-    // next reboot we do this double check.  clipboard ownership
-    // won't be reflected on other screens until we leave but at
-    // least the clipboard itself will work.
+    // this is a double check in case a notice of a clipboard change
+    // went missing, as they did in the old clipboard viewer chain.
+    // clipboard ownership won't be reflected on other screens until we
+    // leave but at least the clipboard itself will work.
     if (m_ownClipboard && !MSWindowsClipboard::is_owned_by_us()) {
         LOG_DEBUG("clipboard changed: lost ownership and no notification received");
         m_ownClipboard = false;
@@ -472,43 +484,44 @@ void MSWindowsScreen::file_paste_status(const FilePasteStatus& status)
 
 bool MSWindowsScreen::send_files(const FilePasteRequest& request)
 {
-    auto fail = [this, &request](const char* reason) {
-        LOG_NOTE("not sending files for paste %s: %s", request.request.c_str(), reason);
+    auto fail = [this, &request](const std::string& reason) {
+        LOG_NOTE("not sending files for paste %s: %s", request.request.c_str(), reason.c_str());
         m_events->add_event(EventType::FILE_PASTE_STATUS, get_event_target(),
                             create_event_data<FilePasteStatus>(FilePasteStatus{
                                 request.request, FilePasteState::FAILED, reason}));
     };
 
     // the request names the files only by id, so read them off the clipboard
-    // again: only what the user has copied here now can be sent
-    std::vector<std::wstring> paths;
-    MSWindowsClipboard clipboard(m_window);
-    if (!clipboard.open(0)) {
-        fail("the clipboard is in use");
+    // again (as the user): only what is copied here now can be sent
+    if (MSWindowsClipboard::is_owned_by_us() ||
+        !MSWindowsClipboardFiles::clipboard_maybe_has_files()) {
+        fail("the files are no longer on the clipboard");
         return true;
     }
-    if (!MSWindowsClipboard::is_owned_by_us() && IsClipboardFormatAvailable(CF_HDROP)) {
-        HANDLE data = GetClipboardData(CF_HDROP);
-        if (data != nullptr) {
-            paths = MSWindowsClipboardFilesConverter::get_paths(data);
-        }
-    }
-    clipboard.close();
-
-    FileClip clip;
-    if (!MSWindowsClipboardFilesConverter::make_file_clip(paths, clip) ||
-        clip.id != request.file_id) {
+    auto files = MSWindowsClipboardFiles::read_clipboard_files();
+    if (!files.present || files.paths.empty()) {
         fail("the files are no longer on the clipboard");
+        return true;
+    }
+    if (!files.ok) {
+        fail(files.problem);
+        return true;
+    }
+    if (files.clip.id != request.file_id) {
+        fail("the files are no longer on the clipboard, or have changed");
         return true;
     }
 
     std::vector<std::string> names;
-    for (std::size_t i = 0; i < clip.files.size(); ++i) {
-        names.push_back(clip.transfer_name(request.request, i));
+    for (std::size_t i = 0; i < files.clip.files.size(); ++i) {
+        names.push_back(files.clip.transfer_name(request.request, i));
     }
-    if (!m_taildrop->send(request.request, paths, names, request.address)) {
+    if (!m_taildrop->send(request.request, files.paths, names, request.address)) {
         fail("another paste is still being sent");
+        return true;
     }
+    LOG_NOTE("sending %zu file(s) to %s with Taildrop for paste %s", files.clip.files.size(),
+             request.address.c_str(), request.request.c_str());
     return true;
 }
 
@@ -586,7 +599,21 @@ bool
 MSWindowsScreen::getClipboard(ClipboardID, IClipboard* dst) const
 {
     MSWindowsClipboard src(m_window);
-    Clipboard::copy(dst, &src);
+    if (!Clipboard::copy(dst, &src)) {
+        return true;
+    }
+
+    // Explorer copies files as an OLE data object the standard formats above
+    // never include for a service running as SYSTEM.  read them (as the user)
+    // and add them -- unless we are the ones offering files from another screen.
+    if (!MSWindowsClipboard::is_owned_by_us() &&
+        MSWindowsClipboardFiles::clipboard_maybe_has_files()) {
+        auto files = MSWindowsClipboardFiles::read_clipboard_files();
+        if (files.ok && dst->open(0)) {
+            dst->add(IClipboard::kFiles, files.clip.marshall());
+            dst->close();
+        }
+    }
     return true;
 }
 
@@ -1099,24 +1126,8 @@ MSWindowsScreen::onEvent(HWND, UINT msg,
                 WPARAM wParam, LPARAM lParam, LRESULT* result)
 {
     switch (msg) {
-    case WM_DRAWCLIPBOARD:
-        // first pass on the message
-        if (m_nextClipboardWindow != nullptr) {
-            SendMessage(m_nextClipboardWindow, msg, wParam, lParam);
-        }
-
-        // now handle the message
+    case WM_CLIPBOARDUPDATE:
         return onClipboardChange();
-
-    case WM_CHANGECBCHAIN:
-        if (m_nextClipboardWindow == (HWND)wParam) {
-            m_nextClipboardWindow = (HWND)lParam;
-            LOG_DEBUG("clipboard chain: new next: 0x%08x", m_nextClipboardWindow);
-        }
-        else if (m_nextClipboardWindow != nullptr) {
-            SendMessage(m_nextClipboardWindow, msg, wParam, lParam);
-        }
-        return true;
 
     case WM_DISPLAYCHANGE:
         return onDisplayChange();
@@ -1546,6 +1557,13 @@ MSWindowsScreen::onClipboardChange()
             sendClipboardEvent(EventType::CLIPBOARD_GRABBED, kClipboardClipboard);
             sendClipboardEvent(EventType::CLIPBOARD_GRABBED, kClipboardSelection);
         }
+        // list what was actually put on the clipboard, so a file copy that
+        // isn't recognised as files can be told apart from one Windows never
+        // reported.  CF_HDROP is 15
+        if (Log::getInstance()->getFilter() >= kDEBUG) {
+            log_clipboard_formats();
+        }
+        note_copied_files();
     }
     else if (!m_ownClipboard) {
         LOG_DEBUG("clipboard changed: got ownership");
@@ -1553,6 +1571,42 @@ MSWindowsScreen::onClipboardChange()
     }
 
     return true;
+}
+
+void MSWindowsScreen::log_clipboard_formats()
+{
+    if (!OpenClipboard(m_window)) {
+        LOG_DEBUG("clipboard changed, but it couldn't be opened to list its formats: %d",
+                  GetLastError());
+        return;
+    }
+    std::string formats;
+    UINT format = 0;
+    while ((format = EnumClipboardFormats(format)) != 0) {
+        char name[128];
+        int length = GetClipboardFormatNameA(format, name, sizeof(name));
+        formats += " " + std::to_string(format);
+        if (length > 0) {
+            formats += "(" + std::string(name, length) + ")";
+        }
+    }
+    CloseClipboard();
+    LOG_DEBUG("clipboard changed, formats present:%s", formats.empty() ? " none" : formats.c_str());
+}
+
+void MSWindowsScreen::note_copied_files()
+{
+    // the files are otherwise only looked at when the pointer leaves this
+    // screen.  looking now shows the copy in the log as it happens, and why
+    // the files can't be pasted elsewhere if they can't.
+    if (!MSWindowsClipboardFiles::clipboard_maybe_has_files()) {
+        return;  // plain text and the like
+    }
+    auto files = MSWindowsClipboardFiles::read_clipboard_files();
+    if (!files.present) {
+        return;
+    }
+    MSWindowsClipboardFiles::report_copy(files.ok ? &files.clip : nullptr, files.problem);
 }
 
 void MSWindowsScreen::warpCursorNoFlush(std::int32_t x, std::int32_t y)
@@ -1646,30 +1700,10 @@ MSWindowsScreen::updateScreenShape()
 
 void MSWindowsScreen::handle_fixes()
 {
-    // fix clipboard chain
-    fixClipboardViewer();
-
     // update keys if keyboard layouts have changed
     if (m_keyState->didGroupsChange()) {
         updateKeys();
     }
-}
-
-void
-MSWindowsScreen::fixClipboardViewer()
-{
-    // XXX -- disable this code for now.  somehow it can cause an infinite
-    // recursion in the WM_DRAWCLIPBOARD handler.  either we're sending
-    // the message to our own window or some window farther down the chain
-    // forwards the message to our window or a window farther up the chain.
-    // i'm not sure how that could happen.  the m_nextClipboardWindow = nullptr
-    // was not in the code that infinite loops and may fix the bug but i
-    // doubt it.
-/*
-    ChangeClipboardChain(m_window, m_nextClipboardWindow);
-    m_nextClipboardWindow = nullptr;
-    m_nextClipboardWindow = SetClipboardViewer(m_window);
-*/
 }
 
 void

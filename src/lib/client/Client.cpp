@@ -691,6 +691,9 @@ void Client::handle_hello()
     }
     m_protocol_minor = (major == kProtocolMajorVersion && minor < kProtocolMinorVersion) ?
                        minor : kProtocolMinorVersion;
+    if (m_protocol_minor < 7) {
+        LOG_NOTE("the server runs a version that can't paste files");
+    }
 
     // say hello back
     LOG_DEBUG1("say hello version %d.%d", kProtocolMajorVersion, m_protocol_minor);

@@ -120,6 +120,13 @@ void MSWindowsTaildrop::run(const std::string& request, const std::vector<std::w
         }
     }
 
+    if (result.state == FilePasteState::SENT) {
+        LOG_NOTE("sent %zu file(s) for paste %s", paths.size(), request.c_str());
+    }
+    else {
+        LOG_NOTE("couldn't send the files for paste %s: %s", request.c_str(),
+                 result.detail.c_str());
+    }
     report(result);
     std::lock_guard<std::mutex> lock(mutex_);
     busy_ = false;
@@ -193,6 +200,9 @@ bool MSWindowsTaildrop::start_program(const std::wstring& program, const std::ws
     if (ok) {
         HANDLE token = session_user_token();
         if (token != nullptr) {
+            // a SYSTEM token has these, but not necessarily switched on
+            enable_privilege(SE_ASSIGNPRIMARYTOKEN_NAME);
+            enable_privilege(SE_INCREASE_QUOTA_NAME);
             void* environment = nullptr;
             CreateEnvironmentBlock(&environment, token, FALSE);
             ok = CreateProcessAsUserW(token, program.c_str(), &writable_command[0], nullptr,
@@ -207,6 +217,10 @@ bool MSWindowsTaildrop::start_program(const std::wstring& program, const std::ws
             SetLastError(error);
         }
         else {
+            if (running_as_system()) {
+                LOG_NOTE("running tailscale.exe as SYSTEM, which doesn't see the user's "
+                         "mapped drives");
+            }
             ok = CreateProcessW(program.c_str(), &writable_command[0], nullptr, nullptr, TRUE,
                                 flags, nullptr, nullptr, &startup.StartupInfo, &process) != FALSE;
         }
