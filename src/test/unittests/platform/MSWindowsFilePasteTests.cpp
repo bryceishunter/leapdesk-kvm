@@ -473,6 +473,8 @@ protected:
         settings.staging_folder = staging_.path() + L"\\Pasted";
         settings.answer_timeout = std::chrono::seconds(5);
         settings.arrival_timeout = std::chrono::milliseconds(500);
+        // these tests paste right after the offer lands
+        settings.settle_time = std::chrono::milliseconds(0);
         return settings;
     }
 
@@ -595,6 +597,28 @@ TEST_F(MSWindowsFilePasteClipboardTests, offerIsKeptOutOfClipboardHistory)
     // reading those fetches nothing
     Sleep(200);
     EXPECT_TRUE(requests().empty());
+}
+
+TEST_F(MSWindowsFilePasteClipboardTests, readsRightAfterTheOfferGetNothing)
+{
+    // Explorer reads the file list the moment files land on the clipboard, and
+    // retries a few times; that mustn't fetch them.  a paste later still works
+    FileClip clip = two_files();
+    send_files(clip, {"12345", "abc"});
+    MSWindowsFilePaste::Settings paste_settings = settings();
+    paste_settings.settle_time = std::chrono::milliseconds(500);
+    start(std::move(paste_settings));
+    ASSERT_TRUE(paste_->offer(files_clipboard(clip, "hello")));
+    ASSERT_TRUE(offered());
+
+    for (int i = 0; i < 4; ++i) {
+        EXPECT_TRUE(paste_files().empty());
+    }
+    EXPECT_TRUE(requests().empty());
+
+    Sleep(600);
+    EXPECT_EQ(2u, paste_files().size());
+    EXPECT_EQ(1u, requests().size());
 }
 
 TEST_F(MSWindowsFilePasteClipboardTests, fileStillOpenWhenSentIsWaitedFor)

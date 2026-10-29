@@ -98,11 +98,37 @@ void set_clipboard_dword(const wchar_t* name, DWORD value)
     }
 }
 
-// Windows clipboard history, the cloud clipboard and clipboard managers read
-// each new clipboard item in full to keep a copy.  for files offered here,
-// reading them is a paste, which has them sent over at once, and again each
-// time a read fails.  these formats ask them to leave the item alone.  the
-// clipboard must be open, by its owner
+// the program asking for the clipboard's data, which has the clipboard open
+// meanwhile, usually with a window of its own
+std::string clipboard_requester()
+{
+    HWND window = GetOpenClipboardWindow();
+    if (window == nullptr) {
+        return "a program that opened the clipboard without a window";
+    }
+    DWORD pid = 0;
+    GetWindowThreadProcessId(window, &pid);
+    std::string name = "process " + std::to_string(pid);
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (process != nullptr) {
+        wchar_t path[MAX_PATH];
+        DWORD size = MAX_PATH;
+        if (QueryFullProcessImageNameW(process, 0, path, &size)) {
+            std::wstring image(path, size);
+            std::wstring::size_type slash = image.find_last_of(L"\\/");
+            name = narrow(slash == std::wstring::npos ? image : image.substr(slash + 1)) +
+                   " (" + std::to_string(pid) + ")";
+        }
+        CloseHandle(process);
+    }
+    return name;
+}
+
+// Windows clipboard history, the cloud clipboard and clipboard managers can
+// read each new clipboard item in full to keep a copy.  for files offered
+// here, reading them is a paste, which has them sent over.  these formats ask
+// them to leave the item alone.  (Explorer pays them no attention; see
+// Settings::settle_time.)  the clipboard must be open, by its owner
 void keep_out_of_clipboard_history()
 {
     set_clipboard_dword(L"ExcludeClipboardContentFromMonitorProcessing", 0);
@@ -323,6 +349,7 @@ void MSWindowsFilePaste::place()
 
         std::lock_guard<std::mutex> lock(mutex_);
         offered_ = std::make_unique<FileClip>(offer->clip);
+        offered_at_ = std::chrono::steady_clock::now();
         LOG_NOTE("%zu file(s) copied on another screen can be pasted here",
                  offer->clip.files.size());
     }
@@ -332,16 +359,31 @@ void MSWindowsFilePaste::place()
 void MSWindowsFilePaste::render()
 {
     FileClip clip;
+    std::chrono::steady_clock::time_point offered_at;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (offered_ == nullptr) {
             return;
         }
         clip = *offered_;
+        offered_at = offered_at_;
+    }
+
+    // Explorer reads the file list the moment files land on the clipboard,
+    // to show cut files dimmed, and asks a few times more within moments if
+    // it gets nothing.  answering that would fetch the files over the network
+    // though nobody pasted.  a paste comes later, and Windows asks again then
+    std::string requester = clipboard_requester();
+    auto since = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - offered_at);
+    if (since < settings_.settle_time) {
+        LOG_DEBUG("not handing over the files to %s %lld ms after offering them",
+                  requester.c_str(), static_cast<long long>(since.count()));
+        return;
     }
 
     std::vector<std::wstring> paths;
-    if (!fetch(clip, paths)) {
+    if (!fetch(clip, requester, paths)) {
         return;
     }
 
@@ -367,9 +409,11 @@ void MSWindowsFilePaste::lost_clipboard()
     }
 }
 
-bool MSWindowsFilePaste::fetch(const FileClip& clip, std::vector<std::wstring>& paths)
+bool MSWindowsFilePaste::fetch(const FileClip& clip, const std::string& requester,
+                               std::vector<std::wstring>& paths)
 {
-    LOG_NOTE("pasting %zu file(s) copied on another screen", clip.files.size());
+    LOG_NOTE("pasting %zu file(s) copied on another screen, for %s", clip.files.size(),
+             requester.c_str());
 
     std::string request = new_request();
     std::string failure;

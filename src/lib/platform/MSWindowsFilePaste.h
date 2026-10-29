@@ -65,6 +65,12 @@ public:
         std::chrono::milliseconds answer_timeout{std::chrono::seconds(30)};
         std::chrono::milliseconds arrival_timeout{std::chrono::seconds(30)};
         std::chrono::milliseconds transfer_timeout{std::chrono::hours(1)};
+        //! How long after the files are offered asks for them get nothing.
+        //! Explorer reads the file list the moment files land on the clipboard
+        //! (to show cut files dimmed), and a few times more if it gets
+        //! nothing; answering would fetch the files though nobody pasted.
+        //! Windows asks again when something does paste.
+        std::chrono::milliseconds settle_time{std::chrono::seconds(1)};
     };
 
     explicit MSWindowsFilePaste(Settings settings);
@@ -124,7 +130,8 @@ private:
     void lost_clipboard();
 
     // fetches the files of \p clip into the staging folder for a paste
-    bool fetch(const FileClip& clip, std::vector<std::wstring>& paths);
+    bool fetch(const FileClip& clip, const std::string& requester,
+               std::vector<std::wstring>& paths);
     bool wait_for_files(const std::string& request, std::string& failure);
     bool collect(const FileClip& clip, const std::string& request,
                  std::vector<std::wstring>& paths, std::string& failure);
@@ -146,6 +153,8 @@ private:
     std::unique_ptr<Offer> pending_;
     // the files on offer while our window owns the clipboard
     std::unique_ptr<FileClip> offered_;
+    // when they were put there
+    std::chrono::steady_clock::time_point offered_at_;
     // the paste waiting for its files, and what has been heard of it
     std::string waiting_;
     std::vector<FilePasteStatus> statuses_;
