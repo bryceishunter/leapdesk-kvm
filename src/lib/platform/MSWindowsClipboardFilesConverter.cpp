@@ -220,9 +220,38 @@ bool MSWindowsClipboardFilesConverter::clipboard_maybe_has_files()
     // to a service that can't reach the data object - as an opaque OLE
     // "DataObject" wrapper.  either is a reason to look closer; plain text
     // is neither.
-    static const UINT data_object = RegisterClipboardFormatW(L"DataObject");
-    return IsClipboardFormatAvailable(CF_HDROP) ||
-           (data_object != 0 && IsClipboardFormatAvailable(data_object));
+    if (IsClipboardFormatAvailable(CF_HDROP)) {
+        return true;
+    }
+
+    // a service running as SYSTEM sees the wrapper when it lists the formats,
+    // yet IsClipboardFormatAvailable() of the wrapper's registered format came
+    // back false there.  so list them, and match the wrapper by name.  the
+    // application that just copied (or clipboard history) may still have the
+    // clipboard open for a moment.
+    bool opened = false;
+    for (int attempt = 0; attempt < 20 && !opened; ++attempt) {
+        opened = OpenClipboard(nullptr) != FALSE;
+        if (!opened) {
+            Sleep(10);
+        }
+    }
+    if (!opened) {
+        // can't tell; better to look closer than to miss a copy
+        LOG_DEBUG("the clipboard is busy, so it may hold files: %lu", GetLastError());
+        return true;
+    }
+    bool found = false;
+    UINT format = 0;
+    while (!found && (format = EnumClipboardFormats(format)) != 0) {
+        wchar_t name[32];
+        found = format == CF_HDROP ||
+                (format >= 0xC000 && GetClipboardFormatNameW(format, name, 32) > 0 &&
+                 lstrcmpW(name, L"DataObject") == 0);
+    }
+    CloseClipboard();
+    LOG_DEBUG("the clipboard %s files", found ? "may hold" : "holds no");
+    return found;
 }
 
 MSWindowsClipboardFilesConverter::ClipboardFiles

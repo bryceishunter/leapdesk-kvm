@@ -712,6 +712,33 @@ TEST_F(MSWindowsFilePasteClipboardTests, oleReaderFindsCopiedFiles)
     EXPECT_TRUE(paths.empty());
 }
 
+TEST_F(MSWindowsFilePasteClipboardTests, filesCheckSeesFileListsAndTheOleWrapper)
+{
+    // text isn't files
+    set_clipboard_text(L"just text");
+    EXPECT_FALSE(MSWindowsClipboardFilesConverter::clipboard_maybe_has_files());
+
+    // a file list is
+    TempFolder folder;
+    std::wstring a = folder.file(L"a.txt", "a");
+    ASSERT_TRUE(open_clipboard());
+    EmptyClipboard();
+    SetClipboardData(CF_HDROP, make_drop({a}));
+    CloseClipboard();
+    EXPECT_TRUE(MSWindowsClipboardFilesConverter::clipboard_maybe_has_files());
+
+    // and so is the bare OLE wrapper, all a service running as SYSTEM sees
+    // of Explorer's copy
+    UINT wrapper = RegisterClipboardFormatW(L"DataObject");
+    ASSERT_NE(0u, wrapper);
+    HGLOBAL data = GlobalAlloc(GMEM_MOVEABLE, 8);
+    ASSERT_TRUE(open_clipboard());
+    EmptyClipboard();
+    SetClipboardData(wrapper, data);
+    CloseClipboard();
+    EXPECT_TRUE(MSWindowsClipboardFilesConverter::clipboard_maybe_has_files());
+}
+
 // the real "--leapdesk-clipboard-files" helper next to the tests, or empty
 static std::wstring clipboard_helper_path()
 {
