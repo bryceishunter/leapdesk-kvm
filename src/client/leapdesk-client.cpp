@@ -24,6 +24,7 @@
 #if WINAPI_MSWINDOWS
 #include "MSWindowsClientTaskBarReceiver.h"
 #include "platform/MSWindowsClipboardFiles.h"
+#include "platform/MSWindowsPasteAgent.h"
 #endif
 
 namespace inputleap {
@@ -35,10 +36,10 @@ CreateTaskBarReceiverFunc createTaskBarReceiver = nullptr;
 int client_main(int argc, char** argv)
 {
 #if WINAPI_MSWINDOWS
-    // hidden helper mode: read the signed-in user's clipboard for the service.
-    // see the note in leapdesk-server.cpp.
+    // hidden helper modes, for the service; see the note in leapdesk-server.cpp
     int helper_exit = 0;
-    if (MSWindowsClipboardFiles::run_helper_if_asked(argc, argv, helper_exit)) {
+    if (MSWindowsClipboardFiles::run_helper_if_asked(argc, argv, helper_exit) ||
+        MSWindowsPasteAgent::run_if_asked(argc, argv, helper_exit)) {
         return helper_exit;
     }
 #endif

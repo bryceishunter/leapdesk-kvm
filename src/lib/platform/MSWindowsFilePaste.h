@@ -18,6 +18,7 @@
 #pragma once
 
 #include "inputleap/FileClip.h"
+#include "platform/MSWindowsFileFetch.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
@@ -129,14 +130,9 @@ private:
     void render();
     void lost_clipboard();
 
-    // fetches the files of \p clip into the staging folder for a paste
-    bool fetch(const FileClip& clip, const std::string& requester,
-               std::vector<std::wstring>& paths);
-    bool wait_for_files(const std::string& request, std::string& failure);
-    bool collect(const FileClip& clip, const std::string& request,
-                 std::vector<std::wstring>& paths, std::string& failure);
-
     Settings settings_;
+    // fetches the files of the offer for a paste
+    MSWindowsFileFetch fetch_;
     std::thread thread_;
     HWND window_ = nullptr;
 
@@ -148,16 +144,12 @@ private:
     std::condition_variable changed_;
     bool ready_ = false;
     bool stopping_ = false;
-    bool connected_ = true;
     // the offer on its way to the paste thread
     std::unique_ptr<Offer> pending_;
     // the files on offer while our window owns the clipboard
     std::unique_ptr<FileClip> offered_;
     // when they were put there
     std::chrono::steady_clock::time_point offered_at_;
-    // the paste waiting for its files, and what has been heard of it
-    std::string waiting_;
-    std::vector<FilePasteStatus> statuses_;
 };
 
 } // namespace inputleap

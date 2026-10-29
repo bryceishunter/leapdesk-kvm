@@ -19,6 +19,7 @@
 
 #include <cassert>
 #include <cstdio>
+#include <cstdlib>
 
 namespace inputleap {
 
@@ -188,6 +189,27 @@ std::string FileClip::transfer_name(const std::string& request, std::size_t inde
 std::string FileClip::transfer_prefix(const std::string& request, std::size_t index)
 {
     return "leapdesk-" + request + "-" + std::to_string(index + 1) + "-";
+}
+
+std::string file_paste_progress(std::uint64_t sent, std::uint64_t total)
+{
+    return "progress " + std::to_string(sent) + " " + std::to_string(total);
+}
+
+bool parse_file_paste_progress(const std::string& detail, std::uint64_t& sent,
+                               std::uint64_t& total)
+{
+    const std::string prefix = "progress ";
+    if (detail.compare(0, prefix.size(), prefix) != 0) {
+        return false;
+    }
+    char* end = nullptr;
+    sent = std::strtoull(detail.c_str() + prefix.size(), &end, 10);
+    if (end == nullptr || *end != ' ') {
+        return false;
+    }
+    total = std::strtoull(end + 1, &end, 10);
+    return end != nullptr && *end == '\0';
 }
 
 bool is_valid_paste_request(const std::string& request)

@@ -86,6 +86,16 @@ struct FilePasteStatus {
     std::string detail;
 };
 
+//! The detail of a SENDING status that says how far the files have got:
+//! bytes sent so far, and in all.  Progress goes out as SENDING rather than a
+//! state of its own because a screen running an older version takes SENDING
+//! as ordinary news, where it would drop the connection over a new state.
+std::string file_paste_progress(std::uint64_t sent, std::uint64_t total);
+
+//! Reads a file_paste_progress() detail; false if \p detail isn't one
+bool parse_file_paste_progress(const std::string& detail, std::uint64_t& sent,
+                               std::uint64_t& total);
+
 //! Whether \p request can name a paste: it ends up in file names
 bool is_valid_paste_request(const std::string& request);
 

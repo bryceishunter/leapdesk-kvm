@@ -16,6 +16,7 @@
  */
 
 #include "platform/MSWindowsClipboardFiles.h"
+#include "platform/MSWindowsFileFetch.h"
 #include "platform/MSWindowsFilePaste.h"
 #include "common/win32/encoding_utilities.h"
 #include "platform/MSWindowsTaildrop.h"
@@ -28,12 +29,15 @@
 #include <shlobj.h>
 #include <shobjidl.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <iterator>
+#include <memory>
 #include <mutex>
 #include <thread>
 
@@ -193,6 +197,111 @@ TEST(MSWindowsFilePasteTests, clipboardFiles_leavesOutFoldersAndMissingFiles)
         << problem;
 }
 
+namespace {
+
+// the statuses a send reports, as they come
+class StatusLog {
+public:
+    MSWindowsTaildrop::Report report()
+    {
+        return [this](const FilePasteStatus& status) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            statuses_.push_back(status);
+            changed_.notify_all();
+        };
+    }
+    // waits for the send to end, and returns everything it reported
+    std::vector<FilePasteStatus> wait_for_end(std::chrono::seconds timeout)
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        changed_.wait_for(lock, timeout, [this]() {
+            return !statuses_.empty() && statuses_.back().state != FilePasteState::SENDING;
+        });
+        return statuses_;
+    }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable changed_;
+    std::vector<FilePasteStatus> statuses_;
+};
+
+// a stand-in for "tailscale file cp ... -": PowerShell running \p script
+std::function<std::wstring(const std::string&, const std::string&)> stand_in(
+    const std::wstring& script)
+{
+    return [script](const std::string&, const std::string&) {
+        return L"powershell.exe -NoProfile -NonInteractive -Command \"" + script + L"\"";
+    };
+}
+
+} // namespace
+
+TEST(MSWindowsFilePasteTests, taildrop_feedsTheFileAndReportsProgress)
+{
+    TempFolder folder;
+    std::string contents;
+    for (int i = 0; i < 3 * 1024 * 1024; ++i) {
+        contents += static_cast<char>((i * 7) & 0xff);
+    }
+    std::wstring source = folder.file(L"big.bin", contents);
+    std::wstring copy = folder.path() + L"\\copy.bin";
+
+    StatusLog log;
+    MSWindowsTaildrop::Options options;
+    options.feed = true;
+    options.progress_interval = std::chrono::milliseconds(0);
+    options.feed_command = stand_in(L"$i=[Console]::OpenStandardInput(); $o=[IO.File]::Create('" +
+                                    copy + L"'); $i.CopyTo($o); $o.Close()");
+    MSWindowsTaildrop taildrop(log.report(), options);
+    ASSERT_TRUE(taildrop.send("paste1", {source}, {"big.bin"}, "100.64.0.9"));
+
+    std::vector<FilePasteStatus> statuses = log.wait_for_end(std::chrono::seconds(60));
+    ASSERT_FALSE(statuses.empty());
+    EXPECT_EQ(FilePasteState::SENT, statuses.back().state) << statuses.back().detail;
+    EXPECT_EQ(contents, read(copy));
+
+    // progress up to the whole file, never past it
+    std::uint64_t last = 0;
+    int progress = 0;
+    for (const auto& status : statuses) {
+        std::uint64_t sent = 0;
+        std::uint64_t total = 0;
+        if (status.state == FilePasteState::SENDING &&
+            parse_file_paste_progress(status.detail, sent, total)) {
+            ++progress;
+            EXPECT_EQ(contents.size(), total);
+            EXPECT_GE(sent, last);
+            EXPECT_LE(sent, total);
+            last = sent;
+        }
+    }
+    EXPECT_GE(progress, 2);
+    EXPECT_EQ(contents.size(), last);
+}
+
+TEST(MSWindowsFilePasteTests, taildrop_cancelStopsAFeedPartWay)
+{
+    TempFolder folder;
+    std::wstring source = folder.file(L"big.bin", std::string(4 * 1024 * 1024, 'x'));
+
+    // a program that never reads: the send stalls once the pipe is full
+    StatusLog log;
+    MSWindowsTaildrop::Options options;
+    options.feed = true;
+    options.feed_command = stand_in(L"Start-Sleep 60");
+    MSWindowsTaildrop taildrop(log.report(), options);
+    ASSERT_TRUE(taildrop.send("paste2", {source}, {"big.bin"}, "100.64.0.9"));
+    Sleep(1500);
+    taildrop.cancel("someone else's paste");
+    taildrop.cancel("paste2");
+
+    std::vector<FilePasteStatus> statuses = log.wait_for_end(std::chrono::seconds(20));
+    ASSERT_FALSE(statuses.empty());
+    EXPECT_EQ(FilePasteState::FAILED, statuses.back().state);
+    EXPECT_EQ("the paste was cancelled", statuses.back().detail);
+}
+
 TEST(MSWindowsFilePasteTests, taildrop_quotesArgumentsForTheProgram)
 {
     for (const std::wstring& argument : {std::wstring(L"plain"), std::wstring(L""),
@@ -330,6 +439,197 @@ TEST(MSWindowsFilePasteTests, filePaste_newRequestsAreValidAndDiffer)
     EXPECT_TRUE(is_valid_paste_request(first));
     EXPECT_EQ(16u, first.size());
     EXPECT_NE(first, second);
+}
+
+namespace {
+
+using Progress = MSWindowsFileFetch::Progress;
+
+// a fetch on a thread of its own, whose requests and progress are recorded
+// for the test to answer
+class FetchProbe {
+public:
+    explicit FetchProbe(std::chrono::milliseconds stall_timeout = std::chrono::minutes(1))
+    {
+        MSWindowsFileFetch::Settings settings;
+        settings.request = [this](const FilePasteRequest& request) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            requests_.push_back(request);
+            changed_.notify_all();
+        };
+        settings.own_address = []() { return std::string("100.64.0.1"); };
+        std::wstring received = received_.path();
+        settings.received_folder = [received]() { return received; };
+        settings.staging_folder = staging_.path();
+        settings.answer_timeout = std::chrono::seconds(10);
+        settings.arrival_timeout = std::chrono::seconds(10);
+        settings.stall_timeout = stall_timeout;
+        settings.progress = [this](const Progress& progress) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            progress_.push_back(progress);
+            changed_.notify_all();
+        };
+        fetch_ = std::make_unique<MSWindowsFileFetch>(settings);
+    }
+    ~FetchProbe()
+    {
+        fetch_->stop();
+        if (thread_.joinable()) {
+            thread_.join();
+        }
+    }
+
+    MSWindowsFileFetch& fetch() { return *fetch_; }
+
+    // starts fetching \p clip; returns the request it asked for the files with
+    std::string start(const FileClip& clip)
+    {
+        thread_ = std::thread([this, clip]() {
+            std::vector<std::wstring> paths;
+            std::string failure;
+            bool ok = fetch_->fetch(clip, "a test", paths, failure);
+            std::lock_guard<std::mutex> lock(mutex_);
+            ended_ = true;
+            ok_ = ok;
+            failure_ = failure;
+            changed_.notify_all();
+        });
+        std::unique_lock<std::mutex> lock(mutex_);
+        changed_.wait_for(lock, std::chrono::seconds(10), [this]() { return !requests_.empty(); });
+        return requests_.empty() ? std::string() : requests_.back().request;
+    }
+
+    bool wait_for(std::function<bool(const Progress&)> matches)
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        return changed_.wait_for(lock, std::chrono::seconds(10), [&]() {
+            return std::any_of(progress_.begin(), progress_.end(), matches);
+        });
+    }
+
+    // waits up to \p timeout for the fetch to end; whether it has, and how
+    bool ended(std::chrono::milliseconds timeout, bool& ok, std::string& failure)
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        if (!changed_.wait_for(lock, timeout, [this]() { return ended_; })) {
+            return false;
+        }
+        ok = ok_;
+        failure = failure_;
+        return true;
+    }
+
+    std::vector<Progress> progress()
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return progress_;
+    }
+
+private:
+    TempFolder received_;
+    TempFolder staging_;
+    std::unique_ptr<MSWindowsFileFetch> fetch_;
+    std::thread thread_;
+    std::mutex mutex_;
+    std::condition_variable changed_;
+    std::vector<FilePasteRequest> requests_;
+    std::vector<Progress> progress_;
+    bool ended_ = false;
+    bool ok_ = false;
+    std::string failure_;
+};
+
+FileClip a_thousand_bytes()
+{
+    FileClip clip;
+    clip.id = "0123456789abcdef";
+    clip.files.push_back({"a.bin", 600, 1});
+    clip.files.push_back({"b.bin", 400, 1});
+    return clip;
+}
+
+} // namespace
+
+TEST(MSWindowsFilePasteTests, fetch_showsProgressAndCanBeCancelled)
+{
+    FetchProbe probe;
+    std::string request = probe.start(a_thousand_bytes());
+    ASSERT_FALSE(request.empty());
+
+    probe.fetch().status(FilePasteStatus{request, FilePasteState::SENDING, "sending 2 file(s)"});
+    probe.fetch().status(FilePasteStatus{request, FilePasteState::SENDING,
+                                         file_paste_progress(250, 1000)});
+    ASSERT_TRUE(probe.wait_for([](const Progress& p) { return p.counting && p.sent == 250; }));
+
+    EXPECT_FALSE(probe.fetch().cancel("fedcba9876543210"));
+    EXPECT_TRUE(probe.fetch().cancel(request));
+    EXPECT_FALSE(probe.fetch().cancel(request));
+
+    bool ok = true;
+    std::string failure;
+    ASSERT_TRUE(probe.ended(std::chrono::seconds(5), ok, failure));
+    EXPECT_FALSE(ok);
+    EXPECT_EQ(MSWindowsFileFetch::kCancelled, failure);
+
+    // what's pasted and how big it is is known from the start
+    auto progress = probe.progress();
+    ASSERT_EQ(4u, progress.size());
+    EXPECT_EQ(Progress::Stage::WAITING, progress[0].stage);
+    EXPECT_EQ(request, progress[0].request);
+    EXPECT_EQ(2u, progress[0].files);
+    EXPECT_EQ("a.bin", progress[0].name);
+    EXPECT_EQ(1000u, progress[0].total);
+    EXPECT_FALSE(progress[0].counting);
+    EXPECT_EQ(Progress::Stage::SENDING, progress[1].stage);
+    EXPECT_FALSE(progress[1].counting);
+    EXPECT_EQ(Progress::Stage::SENDING, progress[2].stage);
+    EXPECT_TRUE(progress[2].counting);
+    EXPECT_EQ(250u, progress[2].sent);
+    EXPECT_EQ(1000u, progress[2].total);
+    EXPECT_EQ(Progress::Stage::FAILED, progress[3].stage);
+    EXPECT_EQ(MSWindowsFileFetch::kCancelled, progress[3].detail);
+}
+
+TEST(MSWindowsFilePasteTests, fetch_canBeCancelledBeforeTheSenderAnswers)
+{
+    FetchProbe probe;
+    std::string request = probe.start(a_thousand_bytes());
+    ASSERT_FALSE(request.empty());
+    EXPECT_TRUE(probe.fetch().cancel(request));
+
+    bool ok = true;
+    std::string failure;
+    ASSERT_TRUE(probe.ended(std::chrono::seconds(5), ok, failure));
+    EXPECT_EQ(MSWindowsFileFetch::kCancelled, failure);
+}
+
+TEST(MSWindowsFilePasteTests, fetch_failsWhenTheTransferStalls)
+{
+    FetchProbe probe(std::chrono::milliseconds(300));
+    std::string request = probe.start(a_thousand_bytes());
+    ASSERT_FALSE(request.empty());
+    probe.fetch().status(FilePasteStatus{request, FilePasteState::SENDING,
+                                         file_paste_progress(100, 1000)});
+
+    bool ok = true;
+    std::string failure;
+    ASSERT_TRUE(probe.ended(std::chrono::seconds(5), ok, failure));
+    EXPECT_FALSE(ok);
+    EXPECT_EQ("the transfer stopped making progress", failure);
+}
+
+TEST(MSWindowsFilePasteTests, fetch_senderThatDoesntCountIsNotStalled)
+{
+    // an older version says only that it has started, then that it's done
+    FetchProbe probe(std::chrono::milliseconds(300));
+    std::string request = probe.start(a_thousand_bytes());
+    ASSERT_FALSE(request.empty());
+    probe.fetch().status(FilePasteStatus{request, FilePasteState::SENDING, "sending 2 file(s)"});
+
+    bool ok = true;
+    std::string failure;
+    EXPECT_FALSE(probe.ended(std::chrono::milliseconds(1000), ok, failure));
+    probe.fetch().cancel(request);
 }
 
 namespace {

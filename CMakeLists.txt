@@ -232,7 +232,7 @@ elseif (${CMAKE_SYSTEM_NAME} MATCHES "Windows")
     set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP /Zi")
     set (CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MD /O2 /Ob2")
 
-    list (APPEND libs Wtsapi32 Userenv Wininet comsuppw Shlwapi)
+    list (APPEND libs Wtsapi32 Userenv Wininet comsuppw Shlwapi Comctl32)
 
     add_definitions (
         /DSYSAPI_WIN32=1

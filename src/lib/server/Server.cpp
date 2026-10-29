@@ -2317,8 +2317,23 @@ void Server::file_paste_requested(BaseClientProxy* requester, const FilePasteReq
 
 void Server::file_paste_status(BaseClientProxy* sender, const FilePasteStatus& status)
 {
-    // only the screen asked to send the files may report on them
     auto paste = m_file_pastes.find(status.request);
+
+    // the pasting screen may call the paste off, and the sender then stops
+    if (paste != m_file_pastes.end() && paste->second.target == getName(sender) &&
+        status.state == FilePasteState::FAILED) {
+        LOG_NOTE("\"%s\" called off paste %s: %s", getName(sender).c_str(),
+                 status.request.c_str(), status.detail.c_str());
+        std::string source = paste->second.source;
+        m_file_pastes.erase(paste);
+        auto client = m_clients.find(source);
+        if (client != m_clients.end()) {
+            client->second->file_paste_status(status);
+        }
+        return;
+    }
+
+    // otherwise only the screen asked to send the files may report on them
     if (paste == m_file_pastes.end() || paste->second.source != getName(sender)) {
         LOG_DEBUG("ignored file paste status for unknown request %s from \"%s\"",
                   status.request.c_str(), getName(sender).c_str());
@@ -2326,10 +2341,19 @@ void Server::file_paste_status(BaseClientProxy* sender, const FilePasteStatus& s
     }
 
     std::string target = paste->second.target;
+    std::uint64_t sent = 0;
+    std::uint64_t total = 0;
     switch (status.state) {
     case FilePasteState::SENDING:
-        LOG_INFO("\"%s\" is sending files for paste %s: %s", getName(sender).c_str(),
-                 status.request.c_str(), status.detail.c_str());
+        if (parse_file_paste_progress(status.detail, sent, total)) {
+            LOG_DEBUG1("\"%s\" has sent %llu of %llu bytes for paste %s",
+                       getName(sender).c_str(), static_cast<unsigned long long>(sent),
+                       static_cast<unsigned long long>(total), status.request.c_str());
+        }
+        else {
+            LOG_INFO("\"%s\" is sending files for paste %s: %s", getName(sender).c_str(),
+                     status.request.c_str(), status.detail.c_str());
+        }
         break;
     case FilePasteState::SENT:
         LOG_NOTE("\"%s\" sent the files for paste %s", getName(sender).c_str(),

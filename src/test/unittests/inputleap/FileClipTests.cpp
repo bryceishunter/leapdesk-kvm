@@ -246,4 +246,17 @@ TEST(FileClipTests, protocol_messagesWithSeveralStringsRoundTrip)
     EXPECT_EQ(0u, stream.getSize());
 }
 
+TEST(FileClipTests, progressDetailRoundTrips)
+{
+    std::uint64_t sent = 0;
+    std::uint64_t total = 0;
+    ASSERT_TRUE(parse_file_paste_progress(file_paste_progress(123456789012ull, 987654321098ull),
+                                          sent, total));
+    EXPECT_EQ(123456789012ull, sent);
+    EXPECT_EQ(987654321098ull, total);
+    EXPECT_FALSE(parse_file_paste_progress("sending 1 file(s) to x", sent, total));
+    EXPECT_FALSE(parse_file_paste_progress("progress 12", sent, total));
+    EXPECT_FALSE(parse_file_paste_progress("progress 12 34 and more", sent, total));
+}
+
 } // namespace inputleap

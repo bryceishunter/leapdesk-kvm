@@ -144,8 +144,26 @@ struct MSWindowsFilePaste::Offer {
     FileClip clip;
 };
 
+namespace {
+
+MSWindowsFileFetch::Settings fetch_settings(const MSWindowsFilePaste::Settings& settings)
+{
+    MSWindowsFileFetch::Settings fetch;
+    fetch.request = settings.request;
+    fetch.own_address = settings.own_address;
+    fetch.received_folder = settings.received_folder;
+    fetch.staging_folder = settings.staging_folder;
+    fetch.answer_timeout = settings.answer_timeout;
+    fetch.arrival_timeout = settings.arrival_timeout;
+    fetch.transfer_timeout = settings.transfer_timeout;
+    return fetch;
+}
+
+} // namespace
+
 MSWindowsFilePaste::MSWindowsFilePaste(Settings settings) :
-    settings_(std::move(settings))
+    settings_(std::move(settings)),
+    fetch_(fetch_settings(settings_))
 {
     thread_ = std::thread([this]() { run(); });
     std::unique_lock<std::mutex> lock(mutex_);
@@ -160,6 +178,7 @@ MSWindowsFilePaste::~MSWindowsFilePaste()
         pending_.reset();
     }
     changed_.notify_all();
+    fetch_.stop();
     if (window_ != nullptr) {
         PostMessageW(window_, kStopMessage, 0, 0);
     }
@@ -204,20 +223,12 @@ void MSWindowsFilePaste::supersede()
 
 void MSWindowsFilePaste::status(const FilePasteStatus& status)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (waiting_.empty() || status.request != waiting_) {
-        LOG_DEBUG("ignored file paste status for request %s", status.request.c_str());
-        return;
-    }
-    statuses_.push_back(status);
-    changed_.notify_all();
+    fetch_.status(status);
 }
 
 void MSWindowsFilePaste::set_connected(bool connected)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    connected_ = connected;
-    changed_.notify_all();
+    fetch_.set_connected(connected);
 }
 
 void MSWindowsFilePaste::run()
@@ -383,7 +394,8 @@ void MSWindowsFilePaste::render()
     }
 
     std::vector<std::wstring> paths;
-    if (!fetch(clip, requester, paths)) {
+    std::string failure;
+    if (!fetch_.fetch(clip, requester, paths, failure)) {
         return;
     }
 
@@ -407,166 +419,6 @@ void MSWindowsFilePaste::lost_clipboard()
     if (!as_user.failed()) {
         clean_staging(settings_.staging_folder, L"");
     }
-}
-
-bool MSWindowsFilePaste::fetch(const FileClip& clip, const std::string& requester,
-                               std::vector<std::wstring>& paths)
-{
-    LOG_NOTE("pasting %zu file(s) copied on another screen, for %s", clip.files.size(),
-             requester.c_str());
-
-    std::string request = new_request();
-    std::string failure;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!connected_) {
-            failure = "the other screens aren't connected";
-        }
-        else {
-            waiting_ = request;
-            statuses_.clear();
-        }
-    }
-
-    if (failure.empty()) {
-        std::string address = settings_.own_address();
-        if (address.empty()) {
-            failure = "this machine has no Tailscale address";
-        }
-        else {
-            settings_.request(FilePasteRequest{request, clip.id, address});
-            if (wait_for_files(request, failure)) {
-                collect(clip, request, paths, failure);
-            }
-        }
-    }
-
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        waiting_.clear();
-        statuses_.clear();
-    }
-    if (!failure.empty()) {
-        LOG_NOTE("couldn't paste the files: %s", failure.c_str());
-        return false;
-    }
-    LOG_NOTE("pasted %zu file(s)", paths.size());
-    return true;
-}
-
-bool MSWindowsFilePaste::wait_for_files(const std::string& request, std::string& failure)
-{
-    std::unique_lock<std::mutex> lock(mutex_);
-    auto heard = [this]() { return stopping_ || !connected_ || !statuses_.empty(); };
-    auto deadline = std::chrono::steady_clock::now() + settings_.answer_timeout;
-    bool sending = false;
-
-    for (;;) {
-        if (!changed_.wait_until(lock, deadline, heard)) {
-            failure = sending ? "the files took too long to arrive" :
-                                "the screen that copied the files didn't answer";
-            return false;
-        }
-        if (stopping_) {
-            failure = "Leapdesk is stopping";
-            return false;
-        }
-        if (!connected_) {
-            failure = "the connection to the other screens was lost";
-            return false;
-        }
-        for (const auto& status : statuses_) {
-            switch (status.state) {
-            case FilePasteState::SENDING:
-                LOG_INFO("paste %s: %s", request.c_str(), status.detail.c_str());
-                if (!sending) {
-                    sending = true;
-                    deadline = std::chrono::steady_clock::now() + settings_.transfer_timeout;
-                }
-                break;
-            case FilePasteState::SENT:
-                return true;
-            case FilePasteState::FAILED:
-                failure = status.detail;
-                return false;
-            }
-        }
-        statuses_.clear();
-    }
-}
-
-bool MSWindowsFilePaste::collect(const FileClip& clip, const std::string& request,
-                                 std::vector<std::wstring>& paths, std::string& failure)
-{
-    // looked up as SYSTEM, which can ask for the user's folder by their token
-    std::wstring received = settings_.received_folder();
-    if (received.empty()) {
-        failure = "the folder Taildrop saves files in wasn't found";
-        return false;
-    }
-
-    // the rest happens in the user's folders, so it is done as the user
-    ImpersonateSessionUser as_user;
-    if (as_user.failed()) {
-        failure = "couldn't act as the signed-in user";
-        return false;
-    }
-
-    // each file gets a folder of its own, so that files with the same name
-    // from different folders don't collide
-    std::wstring folder = settings_.staging_folder + L"\\" + widen(request);
-    CreateDirectoryW(settings_.staging_folder.c_str(), nullptr);
-    if (!CreateDirectoryW(folder.c_str(), nullptr)) {
-        failure = "couldn't create " + narrow(folder);
-        return false;
-    }
-
-    for (std::size_t i = 0; i < clip.files.size(); ++i) {
-        std::string name = clip.transfer_name(request, i);
-        std::string prefix = FileClip::transfer_prefix(request, i);
-        auto deadline = std::chrono::steady_clock::now() + settings_.arrival_timeout;
-        std::wstring from;
-        while ((from = find_received(received, prefix, name)).empty()) {
-            std::unique_lock<std::mutex> lock(mutex_);
-            if (stopping_ || std::chrono::steady_clock::now() >= deadline) {
-                failure = name + " didn't arrive in " + narrow(received);
-                return false;
-            }
-            changed_.wait_for(lock, std::chrono::milliseconds(200));
-        }
-
-        std::wstring file_folder = folder + L"\\" + std::to_wstring(i + 1);
-        std::wstring to = file_folder + L"\\" + widen(clip.files[i].name);
-        if (!CreateDirectoryW(file_folder.c_str(), nullptr)) {
-            failure = "couldn't create " + narrow(file_folder);
-            return false;
-        }
-
-        // Taildrop can still have the file open for a moment after it's sent,
-        // and so can a virus scan of the new file.  failing then would make
-        // the application ask again, which sends the files again
-        auto released = std::chrono::steady_clock::now() + settings_.arrival_timeout;
-        auto waited = std::chrono::steady_clock::now();
-        while (!MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_COPY_ALLOWED)) {
-            DWORD error = GetLastError();
-            bool busy = error == ERROR_SHARING_VIOLATION || error == ERROR_LOCK_VIOLATION ||
-                        error == ERROR_ACCESS_DENIED;
-            std::unique_lock<std::mutex> lock(mutex_);
-            if (!busy || stopping_ || std::chrono::steady_clock::now() >= released) {
-                failure = "couldn't move " + narrow(from) + ": " + std::to_string(error);
-                return false;
-            }
-            changed_.wait_for(lock, std::chrono::milliseconds(100));
-        }
-        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - waited).count();
-        if (ms >= 100) {
-            LOG_DEBUG("waited %lld ms for %s to be closed before moving it",
-                      static_cast<long long>(ms), narrow(from).c_str());
-        }
-        paths.push_back(to);
-    }
-    return true;
 }
 
 HGLOBAL MSWindowsFilePaste::make_drop(const std::vector<std::wstring>& paths)

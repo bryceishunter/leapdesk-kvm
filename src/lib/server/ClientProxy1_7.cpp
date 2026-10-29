@@ -85,8 +85,12 @@ bool ClientProxy1_7::recv_file_status()
         return false;
     }
     status.state = static_cast<FilePasteState>(state);
-    LOG_DEBUG("recv file status request=%s state=%d detail=%s from \"%s\"",
-              status.request.c_str(), state, status.detail.c_str(), getName().c_str());
+    // progress comes a few times a second
+    std::uint64_t sent = 0;
+    std::uint64_t total = 0;
+    LOG(parse_file_paste_progress(status.detail, sent, total) ? kDEBUG2 : kDEBUG,
+        "recv file status request=%s state=%d detail=%s from \"%s\"", status.request.c_str(),
+        state, status.detail.c_str(), getName().c_str());
     getServer()->file_paste_status(this, status);
     return true;
 }

@@ -217,9 +217,12 @@ void ClientConnectionLoggingWrapper::send_file_send_1_7(const FilePasteRequest& 
 
 void ClientConnectionLoggingWrapper::send_file_status_1_7(const FilePasteStatus& status)
 {
-    LOG_DEBUG("send file status request=%s state=%d detail=%s to \"%s\"",
-              status.request.c_str(), static_cast<int>(status.state), status.detail.c_str(),
-              name_.c_str());
+    // progress comes a few times a second
+    std::uint64_t sent = 0;
+    std::uint64_t total = 0;
+    LOG(parse_file_paste_progress(status.detail, sent, total) ? kDEBUG2 : kDEBUG,
+        "send file status request=%s state=%d detail=%s to \"%s\"", status.request.c_str(),
+        static_cast<int>(status.state), status.detail.c_str(), name_.c_str());
     conn_->send_file_status_1_7(status);
 }
 

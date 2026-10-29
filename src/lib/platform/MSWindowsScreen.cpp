@@ -24,7 +24,9 @@
 #include "platform/MSWindowsClipboard.h"
 #include "platform/MSWindowsClipboardFiles.h"
 #include "platform/MSWindowsDesks.h"
+#include "platform/MSWindowsFileFetch.h"
 #include "platform/MSWindowsFilePaste.h"
+#include "platform/MSWindowsPasteAgentHost.h"
 #include "platform/MSWindowsEventQueueBuffer.h"
 #include "platform/MSWindowsKeyState.h"
 #include "platform/MSWindowsScreenSaver.h"
@@ -161,11 +163,16 @@ MSWindowsScreen::MSWindowsScreen(
         throw;
     }
 
-    // report file sends as events, which are safe to post from its thread
+    // report file sends as events, which are safe to post from its thread.
+    // they're fed to Taildrop, so that the pasting screen can show how far
+    // they've got
+    MSWindowsTaildrop::Options sending;
+    sending.feed = true;
+    sending.progress_interval = std::chrono::milliseconds(500);
     m_taildrop = std::make_unique<MSWindowsTaildrop>([this](const FilePasteStatus& status) {
         m_events->add_event(EventType::FILE_PASTE_STATUS, get_event_target(),
                             create_event_data<FilePasteStatus>(status));
-    });
+    }, sending);
 
     // and ask for files the same way when an application pastes them
     MSWindowsFilePaste::Settings paste;
@@ -176,9 +183,33 @@ MSWindowsScreen::MSWindowsScreen(
     paste.own_address = &MSWindowsTaildrop::own_address;
     paste.received_folder = &MSWindowsTaildrop::received_folder;
     paste.staging_folder = (DataDirectories::profile() / "Pasted").wstring();
+
+    // the paste helper, running as the signed-in user, offers them as virtual
+    // files: Explorer then fetches them only when it really pastes
+    MSWindowsPasteAgentHost::Settings helper;
+    helper.request = paste.request;
+    // a paste cancelled in its progress window fails, which tells the screen
+    // sending the files to stop
+    helper.cancelled = [this](const std::string& request) {
+        m_events->add_event(EventType::FILE_PASTE_STATUS, get_event_target(),
+                            create_event_data<FilePasteStatus>(FilePasteStatus{
+                                request, FilePasteState::FAILED, MSWindowsFileFetch::kCancelled}));
+    };
+    wchar_t program[MAX_PATH];
+    if (GetModuleFileNameW(nullptr, program, MAX_PATH) != 0) {
+        helper.program = program;
+    }
+    helper.helper.staging_folder = paste.staging_folder;
+    static const char* const levels[] = {"FATAL", "ERROR", "WARNING", "NOTE", "INFO", "DEBUG",
+                                         "DEBUG1", "DEBUG2", "DEBUG3", "DEBUG4", "DEBUG5"};
+    int level = CLOG->getFilter();
+    helper.helper.log_level = levels[(std::max)(0, (std::min)(level, 10))];
+
     m_file_paste = std::make_unique<MSWindowsFilePaste>(std::move(paste));
+    m_paste_agent = std::make_unique<MSWindowsPasteAgentHost>(std::move(helper));
     // disconnected until enabled
     m_file_paste->set_connected(false);
+    m_paste_agent->set_connected(false);
 
     // copied files are looked at as the signed-in user; say who that is
     if (running_as_system()) {
@@ -208,6 +239,7 @@ MSWindowsScreen::~MSWindowsScreen()
 
     // stop file pastes and sends while the event queue can still take what
     // they post from their own threads
+    m_paste_agent.reset();
     m_file_paste.reset();
     m_taildrop.reset();
 
@@ -249,6 +281,7 @@ MSWindowsScreen::enable()
 
     // a client is enabled once connected, the server while it runs
     m_file_paste->set_connected(true);
+    m_paste_agent->set_connected(true);
 
     // we need to poll some things to fix them
     m_fixTimer = m_events->newTimer(1.0, nullptr);
@@ -285,6 +318,7 @@ MSWindowsScreen::disable()
 {
     // a paste can't reach the screen with the files now, so it fails at once
     m_file_paste->set_connected(false);
+    m_paste_agent->set_connected(false);
 
     // stop tracking the active desk
     m_desks->disable();
@@ -435,11 +469,18 @@ void MSWindowsScreen::send_drag_thread()
 bool
 MSWindowsScreen::setClipboard(ClipboardID, const IClipboard* src)
 {
-    // files copied on another screen are offered by the paste thread, which
-    // can wait for them when an application pastes
-    if (src != nullptr && m_file_paste->offer(*src)) {
+    // files copied on another screen are offered by the paste helper, as
+    // virtual files; or, when it isn't running, by the paste thread, which can
+    // wait for them when an application pastes
+    if (src != nullptr && m_paste_agent->offer(*src)) {
+        m_file_paste->supersede();
         return true;
     }
+    if (src != nullptr && m_file_paste->offer(*src)) {
+        m_paste_agent->supersede();
+        return true;
+    }
+    m_paste_agent->supersede();
     m_file_paste->supersede();
 
     MSWindowsClipboard dst(m_window);
@@ -469,7 +510,7 @@ MSWindowsScreen::checkClipboards()
     // went missing, as they did in the old clipboard viewer chain.
     // clipboard ownership won't be reflected on other screens until we
     // leave but at least the clipboard itself will work.
-    if (m_ownClipboard && !MSWindowsClipboard::is_owned_by_us()) {
+    if (m_ownClipboard && !clipboard_is_ours()) {
         LOG_DEBUG("clipboard changed: lost ownership and no notification received");
         m_ownClipboard = false;
         sendClipboardEvent(EventType::CLIPBOARD_GRABBED, kClipboardClipboard);
@@ -479,7 +520,20 @@ MSWindowsScreen::checkClipboards()
 
 void MSWindowsScreen::file_paste_status(const FilePasteStatus& status)
 {
+    // only the one waiting for that paste takes it
+    m_paste_agent->status(status);
     m_file_paste->status(status);
+
+    // a paste this screen is sending files for, called off by the screen
+    // that pasted them
+    if (status.state == FilePasteState::FAILED) {
+        m_taildrop->cancel(status.request);
+    }
+}
+
+bool MSWindowsScreen::clipboard_is_ours() const
+{
+    return MSWindowsClipboard::is_owned_by_us() || m_paste_agent->owns_clipboard();
 }
 
 bool MSWindowsScreen::send_files(const FilePasteRequest& request)
@@ -493,7 +547,7 @@ bool MSWindowsScreen::send_files(const FilePasteRequest& request)
 
     // the request names the files only by id, so read them off the clipboard
     // again (as the user): only what is copied here now can be sent
-    if (MSWindowsClipboard::is_owned_by_us() ||
+    if (clipboard_is_ours() ||
         !MSWindowsClipboardFiles::clipboard_maybe_has_files()) {
         fail("the files are no longer on the clipboard");
         return true;
@@ -606,7 +660,7 @@ MSWindowsScreen::getClipboard(ClipboardID, IClipboard* dst) const
     // Explorer copies files as an OLE data object the standard formats above
     // never include for a service running as SYSTEM.  read them (as the user)
     // and add them -- unless we are the ones offering files from another screen.
-    if (!MSWindowsClipboard::is_owned_by_us() &&
+    if (!clipboard_is_ours() &&
         MSWindowsClipboardFiles::clipboard_maybe_has_files()) {
         auto files = MSWindowsClipboardFiles::read_clipboard_files();
         if (files.ok && dst->open(0)) {
@@ -1550,7 +1604,7 @@ MSWindowsScreen::onClipboardChange()
 {
     // now notify client that somebody changed the clipboard (unless
     // we're the owner).
-    if (!MSWindowsClipboard::is_owned_by_us()) {
+    if (!clipboard_is_ours()) {
         if (m_ownClipboard) {
             LOG_DEBUG("clipboard changed: lost ownership");
             m_ownClipboard = false;

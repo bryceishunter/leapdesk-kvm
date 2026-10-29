@@ -40,6 +40,7 @@ class Thread;
 class MSWindowsDropTarget;
 class MSWindowsTaildrop;
 class MSWindowsFilePaste;
+class MSWindowsPasteAgentHost;
 
 //! Implementation of IPlatformScreen for Microsoft Windows
 class MSWindowsScreen : public PlatformScreen {
@@ -180,6 +181,10 @@ private: // HACK
 
     // logs files copied on this screen as the copy happens
     void note_copied_files();
+
+    // whether what's on the clipboard was put there by Leapdesk: this process,
+    // or the paste helper
+    bool clipboard_is_ours() const;
 
     // logs the Win32 formats on the clipboard, to see a file copy that
     // isn't recognised
@@ -352,7 +357,10 @@ private:
 
     // sends copied files when another screen pastes them
     std::unique_ptr<MSWindowsTaildrop> m_taildrop;
-    // offers files copied on another screen, and fetches them when pasted
+    // offers files copied on another screen, and fetches them when pasted:
+    // the paste helper running as the user does it as virtual files, and
+    // this, from this process, when the helper isn't running
+    std::unique_ptr<MSWindowsPasteAgentHost> m_paste_agent;
     std::unique_ptr<MSWindowsFilePaste> m_file_paste;
 
     PrimaryKeyDownList m_primaryKeyDownList;

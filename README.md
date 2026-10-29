@@ -102,10 +102,12 @@ On Windows, files copied in Explorer on one screen can be pasted on another.
 Copy them as usual, move to the other screen and paste. The screen that copied
 the files sends them with [Taildrop](https://tailscale.com/kb/1106/taildrop)
 when they're asked for, once per paste, and the application you paste into
-waits until they have arrived; for a large file that window is busy until then.
-Explorer also asks for them while you work in it, so the transfer can start a
-moment before you paste. Copying anything else first replaces them, like any
-other clipboard content.
+waits until they have arrived. A paste that takes more than a moment opens a
+Leapdesk window showing how much has arrived, how fast and how long is left,
+with a Cancel button that stops the transfer on both machines. Explorer also
+asks for the files while you work in it, so the transfer can start a moment
+before you paste. Copying anything else first replaces them, like any other
+clipboard content.
 
 Both machines need Tailscale on the same tailnet, with Taildrop allowed, and
 this version of Leapdesk; an older one still connects but can't take part.

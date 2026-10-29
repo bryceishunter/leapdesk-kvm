@@ -928,8 +928,12 @@ void ServerProxy::request_file_paste(const FilePasteRequest& request)
 
 void ServerProxy::send_file_paste_status(const FilePasteStatus& status)
 {
-    LOG_DEBUG("sending file status request=%s state=%d detail=%s", status.request.c_str(),
-              static_cast<int>(status.state), status.detail.c_str());
+    // progress comes a few times a second
+    std::uint64_t sent = 0;
+    std::uint64_t total = 0;
+    LOG(parse_file_paste_progress(status.detail, sent, total) ? kDEBUG2 : kDEBUG,
+        "sending file status request=%s state=%d detail=%s", status.request.c_str(),
+        static_cast<int>(status.state), status.detail.c_str());
     ProtocolUtil::writef(m_stream, kMsgDFileStatus, &status.request,
                          static_cast<std::uint32_t>(status.state), &status.detail);
 }
@@ -969,8 +973,11 @@ bool ServerProxy::file_status()
         return false;
     }
     status.state = static_cast<FilePasteState>(state);
-    LOG_DEBUG("recv file status request=%s state=%d detail=%s", status.request.c_str(), state,
-              status.detail.c_str());
+    std::uint64_t sent = 0;
+    std::uint64_t total = 0;
+    LOG(parse_file_paste_progress(status.detail, sent, total) ? kDEBUG2 : kDEBUG,
+        "recv file status request=%s state=%d detail=%s", status.request.c_str(), state,
+        status.detail.c_str());
     m_client->file_paste_status(status);
     return true;
 }

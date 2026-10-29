@@ -24,6 +24,7 @@
 #if WINAPI_MSWINDOWS
 #include "MSWindowsServerTaskBarReceiver.h"
 #include "platform/MSWindowsClipboardFiles.h"
+#include "platform/MSWindowsPasteAgent.h"
 #endif
 
 namespace inputleap {
@@ -35,11 +36,13 @@ CreateTaskBarReceiverFunc createTaskBarReceiver = nullptr;
 int server_main(int argc, char** argv)
 {
 #if WINAPI_MSWINDOWS
-    // hidden helper mode: the service (running as SYSTEM) runs a copy of itself
-    // as the signed-in user to read that user's clipboard, which it can't do
-    // itself.  it prints the copied files and exits before any server starts.
+    // hidden helper modes: the service (running as SYSTEM) runs copies of
+    // itself as the signed-in user, which can do what it can't: read that
+    // user's clipboard, and offer them files from other screens.  they start
+    // before anything else
     int helper_exit = 0;
-    if (MSWindowsClipboardFiles::run_helper_if_asked(argc, argv, helper_exit)) {
+    if (MSWindowsClipboardFiles::run_helper_if_asked(argc, argv, helper_exit) ||
+        MSWindowsPasteAgent::run_if_asked(argc, argv, helper_exit)) {
         return helper_exit;
     }
 #endif

@@ -466,6 +466,120 @@ TEST_F(NetworkTests, filePaste_filesCopiedOnClientArePastedOnServer)
     EXPECT_EQ(FilePasteState::SENT, statuses[2].state);
 }
 
+TEST_F(NetworkTests, filePaste_cancelOnTheServerStopsTheClientSending)
+{
+    NetworkAddress serverAddress(TEST_HOST, TEST_PORT);
+    serverAddress.resolve();
+
+    // server
+    SocketMultiplexer serverSocketMultiplexer;
+    ClientListener listener(serverAddress,
+                            std::make_unique<TCPSocketFactory>(&m_events, &serverSocketMultiplexer),
+                            &m_events,
+                            ConnectionSecurityLevel::PLAINTEXT);
+    NiceMock<MockScreen> serverScreen;
+    NiceMock<MockPrimaryClient> primaryClient;
+    NiceMock<MockConfig> serverConfig;
+    NiceMock<MockInputFilter> serverInputFilter;
+
+    ON_CALL(serverConfig, isScreen(_)).WillByDefault(Return(true));
+    ON_CALL(serverConfig, getInputFilter()).WillByDefault(Return(&serverInputFilter));
+
+    ServerArgs serverArgs;
+    Server server(serverConfig, &primaryClient, &serverScreen, &m_events, serverArgs);
+    server.m_mock = true;
+    listener.setServer(&server);
+
+    // client
+    NiceMock<MockScreen> clientScreen;
+    SocketMultiplexer clientSocketMultiplexer;
+    TCPSocketFactory* clientSocketFactory = new TCPSocketFactory(&m_events, &clientSocketMultiplexer);
+
+    ON_CALL(clientScreen, getShape(_, _, _, _)).WillByDefault(Invoke(getScreenShape));
+    ON_CALL(clientScreen, getCursorPos(_, _)).WillByDefault(Invoke(getCursorPos));
+
+    ClientArgs clientArgs;
+    clientArgs.m_enableCrypto = false;
+    Client client(&m_events, "stub", serverAddress, clientSocketFactory, &clientScreen, clientArgs);
+
+    // the user copies files on the client, and pastes them on the server
+    FileClip clip;
+    clip.files.push_back({"big.iso", 5000, 5678});
+    clip.id = FileClip::make_id({"C:\\big.iso"}, clip.files);
+    ON_CALL(clientScreen, getClipboard(_, _))
+        .WillByDefault(Invoke([&clip](ClipboardID, IClipboard* clipboard) {
+            clipboard->open(0);
+            clipboard->clear();
+            clipboard->add(IClipboard::kFiles, clip.marshall());
+            clipboard->close();
+            return true;
+        }));
+    m_events.add_handler(EventType::CLIENT_LISTENER_CONNECTED, &listener,
+                         [&](const auto&)
+    {
+        server.adoptClient(listener.getNextClient());
+        m_events.add_event(EventType::CLIPBOARD_GRABBED, clientScreen.get_event_target(),
+                           create_event_data<IScreen::ClipboardInfo>(
+                               IScreen::ClipboardInfo{kClipboardClipboard, 0}));
+    });
+    FilePasteRequest paste{"00000000000000cc", clip.id, "100.81.171.127"};
+    ON_CALL(primaryClient, setClipboard(_, _))
+        .WillByDefault(Invoke([&](ClipboardID id, const IClipboard* clipboard) {
+            clipboard->open(0);
+            bool has_files = clipboard->has(IClipboard::kFiles);
+            clipboard->close();
+            if (id == kClipboardClipboard && has_files) {
+                m_events.add_event(EventType::FILE_PASTE_REQUESTED,
+                                   primaryClient.get_event_target(),
+                                   create_event_data<FilePasteRequest>(paste));
+            }
+        }));
+
+    // the client starts sending, and says how far it has got
+    EXPECT_CALL(clientScreen, send_files(_))
+        .WillOnce(Invoke([&](const FilePasteRequest& request) {
+            m_events.add_event(EventType::FILE_PASTE_STATUS, clientScreen.get_event_target(),
+                               create_event_data<FilePasteStatus>(FilePasteStatus{
+                                   request.request, FilePasteState::SENDING,
+                                   file_paste_progress(1000, 5000)}));
+        }));
+
+    // which the server's screen shows, and the user there cancels the paste
+    std::vector<FilePasteStatus> server_heard;
+    EXPECT_CALL(primaryClient, file_paste_status(_))
+        .WillRepeatedly(Invoke([&](const FilePasteStatus& status) {
+            server_heard.push_back(status);
+            if (status.state == FilePasteState::SENDING) {
+                m_events.add_event(EventType::FILE_PASTE_STATUS, primaryClient.get_event_target(),
+                                   create_event_data<FilePasteStatus>(FilePasteStatus{
+                                       status.request, FilePasteState::FAILED,
+                                       "the paste was cancelled"}));
+            }
+        }));
+
+    // so the client is told to stop
+    std::vector<FilePasteStatus> client_heard;
+    EXPECT_CALL(clientScreen, file_paste_status(_))
+        .WillRepeatedly(Invoke([&](const FilePasteStatus& status) {
+            client_heard.push_back(status);
+            m_events.raiseQuitEvent();
+        }));
+
+    client.connect();
+
+    m_events.initQuitTimeout(10);
+    m_events.loop();
+    m_events.remove_handler(EventType::CLIENT_LISTENER_CONNECTED, &listener);
+    m_events.cleanupQuitTimeout();
+
+    ASSERT_EQ(1u, server_heard.size());
+    EXPECT_EQ(file_paste_progress(1000, 5000), server_heard[0].detail);
+    ASSERT_EQ(1u, client_heard.size());
+    EXPECT_EQ(paste.request, client_heard[0].request);
+    EXPECT_EQ(FilePasteState::FAILED, client_heard[0].state);
+    EXPECT_EQ("the paste was cancelled", client_heard[0].detail);
+}
+
 void NetworkTests::sendToClient_mockData_handle_client_connected(const Event&,
                                                                  ClientListener* listener)
 {

@@ -78,6 +78,13 @@ bool MSWindowsClipboardFiles::clipboard_file_paths(std::vector<std::wstring>& pa
         }
     };
 
+    // files Leapdesk itself offers from another screen are only a promise:
+    // reading them would fetch them
+    if (IsClipboardFormatAvailable(RegisterClipboardFormatW(L"LeapdeskOwnership"))) {
+        note("the clipboard holds files Leapdesk offers from another screen");
+        return false;
+    }
+
     IDataObject* object = nullptr;
     HRESULT hr = OleGetClipboard(&object);
     if (hr != S_OK || object == nullptr) {
