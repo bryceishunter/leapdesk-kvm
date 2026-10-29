@@ -23,8 +23,7 @@
 
 #if WINAPI_MSWINDOWS
 #include "MSWindowsClientTaskBarReceiver.h"
-#include "platform/MSWindowsClipboardFilesConverter.h"
-#include <cstring>
+#include "platform/MSWindowsClipboardFiles.h"
 #endif
 
 namespace inputleap {
@@ -38,10 +37,9 @@ int client_main(int argc, char** argv)
 #if WINAPI_MSWINDOWS
     // hidden helper mode: read the signed-in user's clipboard for the service.
     // see the note in leapdesk-server.cpp.
-    for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--leapdesk-clipboard-files") == 0) {
-            return MSWindowsClipboardFilesConverter::dump_to_stdout();
-        }
+    int helper_exit = 0;
+    if (MSWindowsClipboardFiles::run_helper_if_asked(argc, argv, helper_exit)) {
+        return helper_exit;
     }
 #endif
 #if SYSAPI_WIN32

@@ -23,8 +23,7 @@
 
 #if WINAPI_MSWINDOWS
 #include "MSWindowsServerTaskBarReceiver.h"
-#include "platform/MSWindowsClipboardFilesConverter.h"
-#include <cstring>
+#include "platform/MSWindowsClipboardFiles.h"
 #endif
 
 namespace inputleap {
@@ -39,10 +38,9 @@ int server_main(int argc, char** argv)
     // hidden helper mode: the service (running as SYSTEM) runs a copy of itself
     // as the signed-in user to read that user's clipboard, which it can't do
     // itself.  it prints the copied files and exits before any server starts.
-    for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--leapdesk-clipboard-files") == 0) {
-            return MSWindowsClipboardFilesConverter::dump_to_stdout();
-        }
+    int helper_exit = 0;
+    if (MSWindowsClipboardFiles::run_helper_if_asked(argc, argv, helper_exit)) {
+        return helper_exit;
     }
 #endif
 #if SYSAPI_WIN32

@@ -22,7 +22,6 @@
 #include "platform/MSWindowsClipboardUTF16Converter.h"
 #include "platform/MSWindowsClipboardBitmapConverter.h"
 #include "platform/MSWindowsClipboardHTMLConverter.h"
-#include "platform/MSWindowsClipboardFilesConverter.h"
 #include "platform/MSWindowsClipboardFacade.h"
 #include "arch/win32/ArchMiscWindows.h"
 #include "base/Log.h"
@@ -41,9 +40,9 @@ MSWindowsClipboard::MSWindowsClipboard(HWND window) :
     m_converters.push_back(new MSWindowsClipboardUTF16Converter);
     m_converters.push_back(new MSWindowsClipboardBitmapConverter);
     m_converters.push_back(new MSWindowsClipboardHTMLConverter);
-    // files (CF_HDROP) are not a converter here: Explorer copies them as an
-    // OLE data object that the raw clipboard API won't expand for a service
-    // running as SYSTEM.  MSWindowsScreen reads them through OLE instead.
+    // files (CF_HDROP) are not a converter here: a service running as SYSTEM
+    // can't read them this way.  MSWindowsScreen reads them with
+    // MSWindowsClipboardFiles instead.
 }
 
 MSWindowsClipboard::~MSWindowsClipboard()

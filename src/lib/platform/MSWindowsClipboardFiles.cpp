@@ -15,7 +15,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "platform/MSWindowsClipboardFilesConverter.h"
+#include "platform/MSWindowsClipboardFiles.h"
 
 #include "platform/MSWindowsSessionUser.h"
 #include "inputleap/FileClip.h"
@@ -26,57 +26,20 @@
 #include <shellapi.h>
 
 #include <cstdio>
+#include <cstring>
 #include <sstream>
 
 namespace inputleap {
 
-IClipboard::EFormat MSWindowsClipboardFilesConverter::getFormat() const
+void MSWindowsClipboardFiles::report_copy(const FileClip* clip, const std::string& problem)
 {
-    return IClipboard::kFiles;
-}
-
-UINT MSWindowsClipboardFilesConverter::getWin32Format() const
-{
-    return CF_HDROP;
-}
-
-HANDLE MSWindowsClipboardFilesConverter::fromIClipboard(const std::string&) const
-{
-    // MSWindowsFilePaste offers these instead, since the files have to be
-    // fetched from the screen that copied them when an application pastes
-    return nullptr;
-}
-
-std::string MSWindowsClipboardFilesConverter::toIClipboard(HANDLE data) const
-{
-    std::vector<std::wstring> paths = get_paths(data);
-    FileClip clip;
-    std::string problem;
-    bool ok = make_file_clip(paths, clip, &problem);
-    report_copy(paths, ok ? &clip : nullptr, problem, false);
-    return ok ? clip.marshall() : std::string();
-}
-
-void MSWindowsClipboardFilesConverter::report_copy(const std::vector<std::wstring>& paths,
-                                                   const FileClip* clip,
-                                                   const std::string& problem, bool copying)
-{
-    // a copy is noted as it happens and read again every time the pointer
-    // leaves this screen, so it is logged once: when it happens, or when it is
-    // first read if the notice of it went missing
-    static std::wstring last_paths;
+    // the same copy can be noticed more than once; log it once
     static DWORD last_sequence = 0;
-    std::wstring key;
-    for (const auto& path : paths) {
-        key += path + L'\n';
-    }
     DWORD sequence = GetClipboardSequenceNumber();
-    bool seen = copying ? sequence == last_sequence : key == last_paths;
-    last_paths = key;
-    last_sequence = sequence;
-    if (seen) {
+    if (sequence == last_sequence) {
         return;
     }
+    last_sequence = sequence;
 
     if (clip != nullptr) {
         std::string names;
@@ -105,7 +68,7 @@ std::string hr_text(HRESULT hr)
 
 } // namespace
 
-bool MSWindowsClipboardFilesConverter::clipboard_file_paths(std::vector<std::wstring>& paths,
+bool MSWindowsClipboardFiles::clipboard_file_paths(std::vector<std::wstring>& paths,
                                                             std::string* why)
 {
     paths.clear();
@@ -114,15 +77,6 @@ bool MSWindowsClipboardFilesConverter::clipboard_file_paths(std::vector<std::wst
             *why = text;
         }
     };
-
-    // a no-op when this already runs as the signed-in user, which is the only
-    // way this works: from SYSTEM, even impersonating, the application's data
-    // object stays out of reach
-    ImpersonateSessionUser as_user;
-    if (as_user.failed()) {
-        note("couldn't act as the signed-in user");
-        return false;
-    }
 
     IDataObject* object = nullptr;
     HRESULT hr = OleGetClipboard(&object);
@@ -214,7 +168,7 @@ bool from_hex(const std::string& hex, std::string& bytes)
 
 } // namespace
 
-bool MSWindowsClipboardFilesConverter::clipboard_maybe_has_files()
+bool MSWindowsClipboardFiles::clipboard_maybe_has_files()
 {
     // an application's file copy shows up either as CF_HDROP directly, or -
     // to a service that can't reach the data object - as an opaque OLE
@@ -254,19 +208,19 @@ bool MSWindowsClipboardFilesConverter::clipboard_maybe_has_files()
     return found;
 }
 
-MSWindowsClipboardFilesConverter::ClipboardFiles
-MSWindowsClipboardFilesConverter::read_clipboard_files()
+MSWindowsClipboardFiles::Files
+MSWindowsClipboardFiles::read_clipboard_files()
 {
     // the same copy is read when it happens and again whenever the pointer
     // leaves this screen.  reading it can mean starting a helper, so reuse
     // the answer until the clipboard changes
     static DWORD cached_sequence = 0;
-    static ClipboardFiles cached;
+    static Files cached;
     DWORD sequence = GetClipboardSequenceNumber();
     if (sequence != 0 && sequence == cached_sequence) {
         return cached;
     }
-    ClipboardFiles result = read_clipboard_files_now();
+    Files result = read_clipboard_files_now();
     // a helper that failed to run says nothing about the clipboard: try again
     // next time rather than remember that
     if (result.present || result.answered) {
@@ -276,10 +230,10 @@ MSWindowsClipboardFilesConverter::read_clipboard_files()
     return result;
 }
 
-MSWindowsClipboardFilesConverter::ClipboardFiles
-MSWindowsClipboardFilesConverter::read_clipboard_files_now()
+MSWindowsClipboardFiles::Files
+MSWindowsClipboardFiles::read_clipboard_files_now()
 {
-    ClipboardFiles result;
+    Files result;
 
     if (running_as_system()) {
         // a service can't read an application's OLE clipboard, so run a copy
@@ -290,7 +244,11 @@ MSWindowsClipboardFilesConverter::read_clipboard_files_now()
                      GetLastError());
             return result;
         }
-        std::wstring command = std::wstring(L"\"") + self + L"\" --leapdesk-clipboard-files";
+        std::wstring command = std::wstring(L"\"") + self + L"\" " +
+                               utf8_to_win_char(kHelperOption).data();
+        if (CLOG->getFilter() >= kDEBUG) {
+            command += std::wstring(L" ") + utf8_to_win_char(kHelperLogOption).data();
+        }
         DWORD exit_code = 1;
         std::string output;
         LOG_DEBUG("reading the copied files as the signed-in user");
@@ -440,7 +398,21 @@ void log_helper(const std::string& line)
 
 } // namespace
 
-int MSWindowsClipboardFilesConverter::dump_to_stdout()
+bool MSWindowsClipboardFiles::run_helper_if_asked(int argc, char** argv, int& exit_code)
+{
+    bool helper = false;
+    bool keep_log = false;
+    for (int i = 1; i < argc; ++i) {
+        helper = helper || std::strcmp(argv[i], kHelperOption) == 0;
+        keep_log = keep_log || std::strcmp(argv[i], kHelperLogOption) == 0;
+    }
+    if (helper) {
+        exit_code = dump_to_stdout(keep_log);
+    }
+    return helper;
+}
+
+int MSWindowsClipboardFiles::dump_to_stdout(bool keep_log)
 {
     // runs as the user; read the clipboard and print its files for the parent
     HRESULT init = OleInitialize(nullptr);
@@ -480,8 +452,10 @@ int MSWindowsClipboardFilesConverter::dump_to_stdout()
     bool sent = stdout_handle != nullptr && stdout_handle != INVALID_HANDLE_VALUE &&
                 WriteFile(stdout_handle, out.data(), static_cast<DWORD>(out.size()), &written,
                           nullptr);
-    log_helper(describe_helper() + " -> " + summary +
-               (sent ? "" : " (couldn't answer: " + std::to_string(GetLastError()) + ")"));
+    if (keep_log) {
+        log_helper(describe_helper() + " -> " + summary +
+                   (sent ? "" : " (couldn't answer: " + std::to_string(GetLastError()) + ")"));
+    }
 
     if (SUCCEEDED(init)) {
         OleUninitialize();
@@ -489,7 +463,7 @@ int MSWindowsClipboardFilesConverter::dump_to_stdout()
     return 0;
 }
 
-std::vector<std::wstring> MSWindowsClipboardFilesConverter::get_paths(HANDLE drop)
+std::vector<std::wstring> MSWindowsClipboardFiles::get_paths(HANDLE drop)
 {
     std::vector<std::wstring> paths;
     HDROP files = static_cast<HDROP>(drop);
@@ -508,7 +482,7 @@ std::vector<std::wstring> MSWindowsClipboardFilesConverter::get_paths(HANDLE dro
     return paths;
 }
 
-bool MSWindowsClipboardFilesConverter::make_file_clip(const std::vector<std::wstring>& paths,
+bool MSWindowsClipboardFiles::make_file_clip(const std::vector<std::wstring>& paths,
                                                       FileClip& clip, std::string* problem)
 {
     auto fail = [problem](const std::string& reason) {

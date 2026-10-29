@@ -22,7 +22,7 @@
 #include "platform/MSWindowsDropTarget.h"
 #include "client/Client.h"
 #include "platform/MSWindowsClipboard.h"
-#include "platform/MSWindowsClipboardFilesConverter.h"
+#include "platform/MSWindowsClipboardFiles.h"
 #include "platform/MSWindowsDesks.h"
 #include "platform/MSWindowsFilePaste.h"
 #include "platform/MSWindowsEventQueueBuffer.h"
@@ -494,11 +494,11 @@ bool MSWindowsScreen::send_files(const FilePasteRequest& request)
     // the request names the files only by id, so read them off the clipboard
     // again (as the user): only what is copied here now can be sent
     if (MSWindowsClipboard::is_owned_by_us() ||
-        !MSWindowsClipboardFilesConverter::clipboard_maybe_has_files()) {
+        !MSWindowsClipboardFiles::clipboard_maybe_has_files()) {
         fail("the files are no longer on the clipboard");
         return true;
     }
-    auto files = MSWindowsClipboardFilesConverter::read_clipboard_files();
+    auto files = MSWindowsClipboardFiles::read_clipboard_files();
     if (!files.present || files.paths.empty()) {
         fail("the files are no longer on the clipboard");
         return true;
@@ -607,8 +607,8 @@ MSWindowsScreen::getClipboard(ClipboardID, IClipboard* dst) const
     // never include for a service running as SYSTEM.  read them (as the user)
     // and add them -- unless we are the ones offering files from another screen.
     if (!MSWindowsClipboard::is_owned_by_us() &&
-        MSWindowsClipboardFilesConverter::clipboard_maybe_has_files()) {
-        auto files = MSWindowsClipboardFilesConverter::read_clipboard_files();
+        MSWindowsClipboardFiles::clipboard_maybe_has_files()) {
+        auto files = MSWindowsClipboardFiles::read_clipboard_files();
         if (files.ok && dst->open(0)) {
             dst->add(IClipboard::kFiles, files.clip.marshall());
             dst->close();
@@ -1599,15 +1599,14 @@ void MSWindowsScreen::note_copied_files()
     // the files are otherwise only looked at when the pointer leaves this
     // screen.  looking now shows the copy in the log as it happens, and why
     // the files can't be pasted elsewhere if they can't.
-    if (!MSWindowsClipboardFilesConverter::clipboard_maybe_has_files()) {
+    if (!MSWindowsClipboardFiles::clipboard_maybe_has_files()) {
         return;  // plain text and the like
     }
-    auto files = MSWindowsClipboardFilesConverter::read_clipboard_files();
+    auto files = MSWindowsClipboardFiles::read_clipboard_files();
     if (!files.present) {
         return;
     }
-    MSWindowsClipboardFilesConverter::report_copy(files.paths, files.ok ? &files.clip : nullptr,
-                                                  files.problem, true);
+    MSWindowsClipboardFiles::report_copy(files.ok ? &files.clip : nullptr, files.problem);
 }
 
 void MSWindowsScreen::warpCursorNoFlush(std::int32_t x, std::int32_t y)
