@@ -23,6 +23,8 @@
 
 #if WINAPI_MSWINDOWS
 #include "MSWindowsServerTaskBarReceiver.h"
+#include "platform/MSWindowsClipboardFilesConverter.h"
+#include <cstring>
 #endif
 
 namespace inputleap {
@@ -33,6 +35,16 @@ CreateTaskBarReceiverFunc createTaskBarReceiver = nullptr;
 
 int server_main(int argc, char** argv)
 {
+#if WINAPI_MSWINDOWS
+    // hidden helper mode: the service (running as SYSTEM) runs a copy of itself
+    // as the signed-in user to read that user's clipboard, which it can't do
+    // itself.  it prints the copied files and exits before any server starts.
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--leapdesk-clipboard-files") == 0) {
+            return MSWindowsClipboardFilesConverter::dump_to_stdout();
+        }
+    }
+#endif
 #if SYSAPI_WIN32
     // record window instance for tray icon, etc
     ArchMiscWindows::setInstanceWin32(GetModuleHandle(nullptr));

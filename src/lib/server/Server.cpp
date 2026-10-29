@@ -301,7 +301,8 @@ Server::adoptClient(BaseClientProxy* client)
 		closeClient(client, kMsgEBusy);
 		return;
 	}
-	LOG_NOTE("client \"%s\" has connected", getName(client).c_str());
+	LOG_NOTE("client \"%s\" has connected%s", getName(client).c_str(),
+	         client->supports_file_paste() ? "" : ", with a version that can't paste files");
 
 	// send configuration options to client
 	sendOptions(client);
@@ -2307,7 +2308,7 @@ void Server::file_paste_requested(BaseClientProxy* requester, const FilePasteReq
         return;
     }
 
-    LOG_INFO("screen \"%s\" pasted %zu file(s) copied on \"%s\", request %s",
+    LOG_NOTE("screen \"%s\" pasted %zu file(s) copied on \"%s\", request %s",
              getName(requester).c_str(), clip.files.size(), getName(source).c_str(),
              request.request.c_str());
     m_file_pastes[request.request] = FilePaste{getName(requester), getName(source)};
@@ -2331,7 +2332,7 @@ void Server::file_paste_status(BaseClientProxy* sender, const FilePasteStatus& s
                  status.request.c_str(), status.detail.c_str());
         break;
     case FilePasteState::SENT:
-        LOG_INFO("\"%s\" sent the files for paste %s", getName(sender).c_str(),
+        LOG_NOTE("\"%s\" sent the files for paste %s", getName(sender).c_str(),
                  status.request.c_str());
         m_file_pastes.erase(paste);
         break;

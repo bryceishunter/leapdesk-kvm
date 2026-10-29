@@ -292,7 +292,8 @@ void MSWindowsFilePaste::place()
 
         std::lock_guard<std::mutex> lock(mutex_);
         offered_ = std::make_unique<FileClip>(offer->clip);
-        LOG_INFO("offering %zu file(s) copied on another screen", offer->clip.files.size());
+        LOG_NOTE("%zu file(s) copied on another screen can be pasted here",
+                 offer->clip.files.size());
     }
     clipboard.close();
 }

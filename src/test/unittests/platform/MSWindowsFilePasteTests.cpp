@@ -17,6 +17,7 @@
 
 #include "platform/MSWindowsClipboardFilesConverter.h"
 #include "platform/MSWindowsFilePaste.h"
+#include "common/win32/encoding_utilities.h"
 #include "platform/MSWindowsTaildrop.h"
 #include "inputleap/Clipboard.h"
 #include "inputleap/FileClip.h"
@@ -190,8 +191,18 @@ TEST(MSWindowsFilePasteTests, filesConverter_leavesOutFoldersAndMissingFiles)
     EXPECT_EQ("", converter.toIClipboard(missing));
     GlobalFree(missing);
 
+    // and says why, for the log
     FileClip clip;
-    EXPECT_FALSE(MSWindowsClipboardFilesConverter::make_file_clip({}, clip));
+    std::string problem;
+    EXPECT_FALSE(MSWindowsClipboardFilesConverter::make_file_clip({}, clip, &problem));
+    EXPECT_EQ("no files", problem);
+    EXPECT_FALSE(MSWindowsClipboardFilesConverter::make_file_clip({file, subfolder}, clip,
+                                                                  &problem));
+    EXPECT_NE(std::string::npos, problem.find("subfolder is a folder")) << problem;
+    EXPECT_FALSE(MSWindowsClipboardFilesConverter::make_file_clip({file + L".gone"}, clip,
+                                                                  &problem));
+    EXPECT_NE(std::string::npos, problem.find("file.txt.gone can't be read (error 2)"))
+        << problem;
 }
 
 TEST(MSWindowsFilePasteTests, filesConverter_doesNotOfferOtherScreensFiles)
@@ -676,6 +687,153 @@ TEST_F(MSWindowsFilePasteClipboardTests, shellPastesIntoAFolder)
     parent->Release();
     CoTaskMemFree(folder);
     OleUninitialize();
+}
+
+TEST_F(MSWindowsFilePasteClipboardTests, oleReaderFindsCopiedFiles)
+{
+    // the source side reads copied files through OleGetClipboard so it works
+    // when running as SYSTEM; a plain CF_HDROP is exposed through OLE too
+    TempFolder folder;
+    std::wstring a = folder.file(L"one.txt", "1");
+    std::wstring b = folder.file(L"two.txt", "22");
+    ASSERT_TRUE(open_clipboard());
+    EmptyClipboard();
+    SetClipboardData(CF_HDROP, make_drop({a, b}));
+    CloseClipboard();
+
+    std::vector<std::wstring> paths;
+    ASSERT_TRUE(MSWindowsClipboardFilesConverter::clipboard_file_paths(paths));
+    EXPECT_EQ((std::vector<std::wstring>{a, b}), paths);
+
+    // text is not files
+    set_clipboard_text(L"hello");
+    paths.clear();
+    EXPECT_FALSE(MSWindowsClipboardFilesConverter::clipboard_file_paths(paths));
+    EXPECT_TRUE(paths.empty());
+}
+
+// the real "--leapdesk-clipboard-files" helper next to the tests, or empty
+static std::wstring clipboard_helper_path()
+{
+    wchar_t module[MAX_PATH];
+    GetModuleFileNameW(nullptr, module, MAX_PATH);
+    std::wstring helper(module);
+    helper.resize(helper.find_last_of(L"\\/"));
+    helper += L"\\leapdesk-server.exe";
+    return GetFileAttributesW(helper.c_str()) == INVALID_FILE_ATTRIBUTES ? L"" : helper;
+}
+
+// runs the helper as this user (as the service runs it as the signed-in
+// user), with its LOCALAPPDATA in \p app_data so its log stays out of the
+// real profile.  returns false if it couldn't be started.
+static bool run_clipboard_helper(const std::wstring& helper, const std::wstring& app_data,
+                          std::string& output, DWORD& exit_code)
+{
+    wchar_t saved[MAX_PATH] = {};
+    DWORD had = GetEnvironmentVariableW(L"LOCALAPPDATA", saved, MAX_PATH);
+    SetEnvironmentVariableW(L"LOCALAPPDATA", app_data.c_str());
+
+    SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
+    HANDLE read_end = nullptr;
+    HANDLE write_end = nullptr;
+    CreatePipe(&read_end, &write_end, &sa, 0);
+    SetHandleInformation(read_end, HANDLE_FLAG_INHERIT, 0);
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdOutput = write_end;
+    startup.hStdError = write_end;
+    std::wstring command = L"\"" + helper + L"\" --leapdesk-clipboard-files";
+    PROCESS_INFORMATION process{};
+    bool started = CreateProcessW(nullptr, &command[0], nullptr, nullptr, TRUE,
+                                  CREATE_NO_WINDOW, nullptr, nullptr, &startup,
+                                  &process) != FALSE;
+    SetEnvironmentVariableW(L"LOCALAPPDATA", had != 0 ? saved : nullptr);
+    CloseHandle(write_end);
+
+    output.clear();
+    if (started) {
+        char buffer[512];
+        DWORD count = 0;
+        while (ReadFile(read_end, buffer, sizeof(buffer), &count, nullptr) && count > 0) {
+            output.append(buffer, count);
+        }
+        WaitForSingleObject(process.hProcess, 10000);
+        GetExitCodeProcess(process.hProcess, &exit_code);
+        CloseHandle(process.hProcess);
+        CloseHandle(process.hThread);
+    }
+    CloseHandle(read_end);
+    return started;
+}
+
+static std::string read_text_file(const std::wstring& path)
+{
+    std::ifstream file(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+}
+
+TEST_F(MSWindowsFilePasteClipboardTests, helperModePrintsCopiedFiles)
+{
+    // the helper reads the clipboard and prints the files for its (SYSTEM) parent
+    std::wstring helper = clipboard_helper_path();
+    if (helper.empty()) {
+        GTEST_SKIP() << "leapdesk-server.exe not next to the tests";
+    }
+
+    TempFolder folder;
+    std::wstring a = folder.file(L"alpha.bin", "12345");
+    std::wstring b = folder.file(L"beta.bin", "");
+    ASSERT_TRUE(open_clipboard());
+    EmptyClipboard();
+    SetClipboardData(CF_HDROP, make_drop({a, b}));
+    CloseClipboard();
+
+    std::string output;
+    DWORD exit_code = 1;
+    ASSERT_TRUE(run_clipboard_helper(helper, folder.path(), output, exit_code));
+    EXPECT_EQ(0u, exit_code);
+    ASSERT_EQ(0u, output.rfind("OK\n", 0)) << output;
+    std::size_t first = output.find('\n');
+    std::size_t second = output.find('\n', first + 1);
+    std::string clip_hex = output.substr(first + 1, second - first - 1);
+    // decode the hex FileClip and check it describes the two files
+    std::string bytes;
+    for (std::size_t i = 0; i + 1 < clip_hex.size(); i += 2) {
+        bytes += static_cast<char>(std::stoi(clip_hex.substr(i, 2), nullptr, 16));
+    }
+    FileClip clip;
+    ASSERT_TRUE(FileClip::unmarshall(bytes, clip));
+    ASSERT_EQ(2u, clip.files.size());
+    EXPECT_EQ("alpha.bin", clip.files[0].name);
+    EXPECT_EQ(5u, clip.files[0].size);
+    EXPECT_EQ("beta.bin", clip.files[1].name);
+    EXPECT_NE(std::string::npos, output.find(win_wchar_to_utf8(a.c_str())));
+
+    // and it notes what it did in its own log
+    std::string log = read_text_file(folder.path() + L"\\Leapdesk\\clipboard-helper.log");
+    EXPECT_NE(std::string::npos, log.find("-> OK 2 file(s)")) << log;
+    EXPECT_NE(std::string::npos, log.find("integrity=")) << log;
+}
+
+TEST_F(MSWindowsFilePasteClipboardTests, helperModeExplainsNoFiles)
+{
+    // text isn't files: the helper answers NONE with the reason, not silence
+    std::wstring helper = clipboard_helper_path();
+    if (helper.empty()) {
+        GTEST_SKIP() << "leapdesk-server.exe not next to the tests";
+    }
+    TempFolder folder;
+    set_clipboard_text(L"just text");
+
+    std::string output;
+    DWORD exit_code = 1;
+    ASSERT_TRUE(run_clipboard_helper(helper, folder.path(), output, exit_code));
+    EXPECT_EQ(0u, exit_code);
+    EXPECT_EQ(0u, output.rfind("NONE\n", 0)) << output;
+    EXPECT_NE(std::string::npos, output.find("no files")) << output;
+    std::string log = read_text_file(folder.path() + L"\\Leapdesk\\clipboard-helper.log");
+    EXPECT_NE(std::string::npos, log.find("-> NONE")) << log;
 }
 
 TEST_F(MSWindowsFilePasteClipboardTests, rejectsClipboardWithoutFiles)

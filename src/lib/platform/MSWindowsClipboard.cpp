@@ -41,7 +41,9 @@ MSWindowsClipboard::MSWindowsClipboard(HWND window) :
     m_converters.push_back(new MSWindowsClipboardUTF16Converter);
     m_converters.push_back(new MSWindowsClipboardBitmapConverter);
     m_converters.push_back(new MSWindowsClipboardHTMLConverter);
-    m_converters.push_back(new MSWindowsClipboardFilesConverter);
+    // files (CF_HDROP) are not a converter here: Explorer copies them as an
+    // OLE data object that the raw clipboard API won't expand for a service
+    // running as SYSTEM.  MSWindowsScreen reads them through OLE instead.
 }
 
 MSWindowsClipboard::~MSWindowsClipboard()
@@ -157,12 +159,6 @@ MSWindowsClipboard::getTime() const
 bool
 MSWindowsClipboard::has(EFormat format) const
 {
-    // files we offer from another screen are only a promise: reading them
-    // would fetch them
-    if (format == kFiles && is_owned_by_us()) {
-        return false;
-    }
-
     for (auto index = m_converters.begin(); index != m_converters.end(); ++index) {
         IMSWindowsClipboardConverter* converter = *index;
         if (converter->getFormat() == format) {

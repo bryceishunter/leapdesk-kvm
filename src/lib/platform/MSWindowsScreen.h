@@ -178,6 +178,13 @@ private: // HACK
     bool onDisplayChange();
     bool onClipboardChange();
 
+    // logs files copied on this screen as the copy happens
+    void note_copied_files();
+
+    // logs the Win32 formats on the clipboard, to see a file copy that
+    // isn't recognised
+    void log_clipboard_formats();
+
     // warp cursor without discarding queued events
     void warpCursorNoFlush(std::int32_t x, std::int32_t y);
 
@@ -192,9 +199,6 @@ private: // HACK
 
     // fix timer callback
     void handle_fixes();
-
-    // fix the clipboard viewer chain
-    void fixClipboardViewer();
 
     // enable/disable special key combinations so we can catch/pass them
     void enableSpecialKeys(bool) const;
@@ -296,9 +300,8 @@ private:
     bool m_screensaverActive;
 
     // clipboard stuff.  our window is used mainly as a clipboard
-    // owner and as a link in the clipboard viewer chain.
+    // owner and to listen for clipboard changes.
     HWND m_window;
-    HWND m_nextClipboardWindow;
     bool m_ownClipboard;
 
     // one desk per desktop and a cond var to communicate with it
