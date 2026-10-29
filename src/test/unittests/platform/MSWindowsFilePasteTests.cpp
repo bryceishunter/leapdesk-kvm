@@ -559,6 +559,73 @@ TEST_F(MSWindowsFilePasteClipboardTests, pastesFilesCopiedOnAnotherScreen)
     EXPECT_EQ(1u, requests().size());
 }
 
+TEST_F(MSWindowsFilePasteClipboardTests, offerIsKeptOutOfClipboardHistory)
+{
+    // clipboard history reading the files would paste them, so the offer asks
+    // clipboard watchers to leave it alone
+    FileClip clip = two_files();
+    send_files(clip, {"12345", "abc"});
+    start(settings());
+    ASSERT_TRUE(paste_->offer(files_clipboard(clip, "hello")));
+    ASSERT_TRUE(offered());
+
+    auto read_dword = [](const wchar_t* name, DWORD& value) {
+        UINT format = RegisterClipboardFormatW(name);
+        bool found = false;
+        if (open_clipboard()) {
+            HANDLE data = GetClipboardData(format);
+            if (data != nullptr) {
+                value = *static_cast<const DWORD*>(GlobalLock(data));
+                GlobalUnlock(data);
+                found = true;
+            }
+            CloseClipboard();
+        }
+        return found;
+    };
+    DWORD value = 1;
+    EXPECT_TRUE(read_dword(L"ExcludeClipboardContentFromMonitorProcessing", value));
+    value = 1;
+    EXPECT_TRUE(read_dword(L"CanIncludeInClipboardHistory", value));
+    EXPECT_EQ(0u, value);
+    value = 1;
+    EXPECT_TRUE(read_dword(L"CanUploadToCloudClipboard", value));
+    EXPECT_EQ(0u, value);
+
+    // reading those fetches nothing
+    Sleep(200);
+    EXPECT_TRUE(requests().empty());
+}
+
+TEST_F(MSWindowsFilePasteClipboardTests, fileStillOpenWhenSentIsWaitedFor)
+{
+    // Taildrop or a virus scan can hold a file open for a moment after it's
+    // sent.  the paste waits instead of failing, so the application doesn't
+    // ask again and have the files sent again
+    FileClip clip;
+    clip.files.push_back({"held.bin", 4, 1});
+    clip.id = FileClip::make_id({"C:\\a\\held.bin"}, clip.files);
+    source_ = [this, clip](const FilePasteRequest& request) {
+        paste_->status({request.request, FilePasteState::SENDING, "sending"});
+        std::wstring path = received_.file(ascii(clip.transfer_name(request.request, 0)), "held");
+        HANDLE held = CreateFileW(path.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, 0,
+                                  nullptr);
+        paste_->status({request.request, FilePasteState::SENT, ""});
+        Sleep(400);
+        CloseHandle(held);
+    };
+    MSWindowsFilePaste::Settings paste_settings = settings();
+    paste_settings.arrival_timeout = std::chrono::seconds(3);
+    start(std::move(paste_settings));
+    ASSERT_TRUE(paste_->offer(files_clipboard(clip, "hello")));
+    ASSERT_TRUE(offered());
+
+    std::vector<std::wstring> paths = paste_files();
+    ASSERT_EQ(1u, paths.size());
+    EXPECT_EQ("held", read(paths[0]));
+    EXPECT_EQ(1u, requests().size());
+}
+
 TEST_F(MSWindowsFilePasteClipboardTests, replacingTheClipboardCleansUp)
 {
     FileClip clip = two_files();

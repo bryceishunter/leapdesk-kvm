@@ -80,6 +80,36 @@ void remove_tree(const std::wstring& folder)
     RemoveDirectoryW(folder.c_str());
 }
 
+// puts \p value on the open clipboard in the registered format \p name
+void set_clipboard_dword(const wchar_t* name, DWORD value)
+{
+    UINT format = RegisterClipboardFormatW(name);
+    HGLOBAL data = GlobalAlloc(GMEM_MOVEABLE, sizeof(DWORD));
+    if (format == 0 || data == nullptr) {
+        if (data != nullptr) {
+            GlobalFree(data);
+        }
+        return;
+    }
+    *static_cast<DWORD*>(GlobalLock(data)) = value;
+    GlobalUnlock(data);
+    if (SetClipboardData(format, data) == nullptr) {
+        GlobalFree(data);
+    }
+}
+
+// Windows clipboard history, the cloud clipboard and clipboard managers read
+// each new clipboard item in full to keep a copy.  for files offered here,
+// reading them is a paste, which has them sent over at once, and again each
+// time a read fails.  these formats ask them to leave the item alone.  the
+// clipboard must be open, by its owner
+void keep_out_of_clipboard_history()
+{
+    set_clipboard_dword(L"ExcludeClipboardContentFromMonitorProcessing", 0);
+    set_clipboard_dword(L"CanIncludeInClipboardHistory", 0);
+    set_clipboard_dword(L"CanUploadToCloudClipboard", 0);
+}
+
 } // namespace
 
 struct MSWindowsFilePaste::Offer {
@@ -289,6 +319,7 @@ void MSWindowsFilePaste::place()
         }
         // no data: Windows asks for it when an application pastes
         SetClipboardData(CF_HDROP, nullptr);
+        keep_out_of_clipboard_history();
 
         std::lock_guard<std::mutex> lock(mutex_);
         offered_ = std::make_unique<FileClip>(offer->clip);
@@ -462,10 +493,32 @@ bool MSWindowsFilePaste::collect(const FileClip& clip, const std::string& reques
 
         std::wstring file_folder = folder + L"\\" + std::to_wstring(i + 1);
         std::wstring to = file_folder + L"\\" + widen(clip.files[i].name);
-        if (!CreateDirectoryW(file_folder.c_str(), nullptr) ||
-            !MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_COPY_ALLOWED)) {
-            failure = "couldn't move " + narrow(from) + ": " + std::to_string(GetLastError());
+        if (!CreateDirectoryW(file_folder.c_str(), nullptr)) {
+            failure = "couldn't create " + narrow(file_folder);
             return false;
+        }
+
+        // Taildrop can still have the file open for a moment after it's sent,
+        // and so can a virus scan of the new file.  failing then would make
+        // the application ask again, which sends the files again
+        auto released = std::chrono::steady_clock::now() + settings_.arrival_timeout;
+        auto waited = std::chrono::steady_clock::now();
+        while (!MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_COPY_ALLOWED)) {
+            DWORD error = GetLastError();
+            bool busy = error == ERROR_SHARING_VIOLATION || error == ERROR_LOCK_VIOLATION ||
+                        error == ERROR_ACCESS_DENIED;
+            std::unique_lock<std::mutex> lock(mutex_);
+            if (!busy || stopping_ || std::chrono::steady_clock::now() >= released) {
+                failure = "couldn't move " + narrow(from) + ": " + std::to_string(error);
+                return false;
+            }
+            changed_.wait_for(lock, std::chrono::milliseconds(100));
+        }
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - waited).count();
+        if (ms >= 100) {
+            LOG_DEBUG("waited %lld ms for %s to be closed before moving it",
+                      static_cast<long long>(ms), narrow(from).c_str());
         }
         paths.push_back(to);
     }
