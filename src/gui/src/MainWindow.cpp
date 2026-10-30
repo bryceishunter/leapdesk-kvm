@@ -56,6 +56,7 @@
 #if defined(Q_OS_WIN)
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
+#include <shellapi.h>
 #endif
 
 #include <signal.h>
@@ -110,6 +111,54 @@ const char* icon_name_for_connection_state(AppConnectionState state)
 }
 
 static const char* APP_LARGE_ICON = ":/res/icons/256x256/leapdesk.png";
+
+#if defined(Q_OS_WIN)
+// Starts or stops the Leapdesk service.  Returns ERROR_SUCCESS, also when it was in that
+// state already, or the Windows error.
+DWORD control_leapdesk_service(bool start)
+{
+    SC_HANDLE manager = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (manager == nullptr)
+        return GetLastError();
+
+    DWORD error = ERROR_SUCCESS;
+    SC_HANDLE service = OpenServiceW(manager, L"Leapdesk", start ? SERVICE_START : SERVICE_STOP);
+    if (service == nullptr) {
+        error = GetLastError();
+    } else {
+        SERVICE_STATUS status;
+        BOOL done = start ? StartServiceW(service, 0, nullptr)
+                          : ControlService(service, SERVICE_CONTROL_STOP, &status);
+        if (!done)
+            error = GetLastError();
+        CloseServiceHandle(service);
+    }
+    CloseServiceHandle(manager);
+
+    if (error == ERROR_SERVICE_ALREADY_RUNNING || error == ERROR_SERVICE_NOT_ACTIVE)
+        return ERROR_SUCCESS;
+    return error;
+}
+
+// The Leapdesk service's state, such as SERVICE_RUNNING, or 0 if it can't be read
+DWORD leapdesk_service_state()
+{
+    SC_HANDLE manager = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (manager == nullptr)
+        return 0;
+
+    DWORD state = 0;
+    SC_HANDLE service = OpenServiceW(manager, L"Leapdesk", SERVICE_QUERY_STATUS);
+    if (service != nullptr) {
+        SERVICE_STATUS status;
+        if (QueryServiceStatus(service, &status))
+            state = status.dwCurrentState;
+        CloseServiceHandle(service);
+    }
+    CloseServiceHandle(manager);
+    return state;
+}
+#endif
 
 } // namespace
 
@@ -608,45 +657,25 @@ void MainWindow::proofreadInfo()
 
 void MainWindow::start_cmd_app()
 {
-    bool desktopMode = appConfig().processMode() == Desktop;
-    bool serviceMode = appConfig().processMode() == Service;
-
     appendLogDebug("starting process");
     m_ExpectedRunningState = kStarted;
     set_connection_state(AppConnectionState::CONNECTING);
+
+    if (appConfig().processMode() == Service) {
+        // the service runs what HKLM\SOFTWARE\Leapdesk sets up, which only an administrator
+        // can change; this window can only start and stop it
+        m_pLogWindow->startNewInstance();
+        controlService(true);
+        return;
+    }
 
     QString app;
     QStringList args;
 
     args << "-f" << "--no-tray" << "--debug" << appConfig().logLevelText();
-
-
     args << "--name" << getScreenName();
 
-    if (desktopMode)
-    {
-        cmd_app_process_ = new QProcess(this);
-    }
-    else
-    {
-        // tell client/server to talk to daemon through ipc.
-        args << "--ipc";
-
-#if defined(Q_OS_WIN)
-        // tell the client/server to shut down when a ms windows desk
-        // is switched; this is because we may need to elevate or not
-        // based on which desk the user is in (login always needs
-        // elevation, where as default desk does not).
-        // Note that this is only enabled when Leapdesk KVM is set to elevate
-        // 'as needed' (e.g. on a UAC dialog popup) in order to prevent
-        // unnecessary restarts when Leapdesk KVM was started elevated or
-        // when it is not allowed to elevate. In these cases restarting
-        // the server is fruitless.
-        if (appConfig().elevateMode() == ElevateAsNeeded) {
-                args << "--stop-on-desk-switch";
-        }
-#endif
-    }
+    cmd_app_process_ = new QProcess(this);
 
 #ifndef Q_OS_LINUX
 
@@ -675,12 +704,9 @@ void MainWindow::start_cmd_app()
         return;
     }
 
-    if (desktopMode)
-    {
-        connect(cmd_app_process_, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this, &MainWindow::cmd_app_finished);
-        connect(cmd_app_process_, &QProcess::readyReadStandardOutput, this, &MainWindow::logOutput);
-        connect(cmd_app_process_, &QProcess::readyReadStandardError, this, &MainWindow::logError);
-    }
+    connect(cmd_app_process_, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this, &MainWindow::cmd_app_finished);
+    connect(cmd_app_process_, &QProcess::readyReadStandardOutput, this, &MainWindow::logOutput);
+    connect(cmd_app_process_, &QProcess::readyReadStandardError, this, &MainWindow::logError);
 
     m_pLogWindow->startNewInstance();
 
@@ -696,43 +722,61 @@ void MainWindow::start_cmd_app()
     if (appConfig().logToFile())
         appendLogInfo("log file: " + appConfig().logFilename());
 
-    if (desktopMode)
+    cmd_app_process_->start(app, args);
+    if (!cmd_app_process_->waitForStarted())
     {
-        cmd_app_process_->start(app, args);
-        if (!cmd_app_process_->waitForStarted())
-        {
-            show();
-            QMessageBox::warning(this, tr("Program can not be started"), QString(tr("The executable<br><br>%1<br><br>could not be successfully started, although it does exist. Please check if you have sufficient permissions to run this program.").arg(app)));
-            return;
-        }
-    }
-
-    if (serviceMode)
-    {
-        QString command(app + " " + args.join(" "));
-        ElevateMode elevate = appConfig().elevateMode();
-
-        // A service set up by the installer comes with its own command line (screen name,
-        // profile, certificates, config file). Starting it from here must not replace that
-        // with one built from this window's settings.
-        QString installed = installedServiceCommand();
-        if (!installed.isEmpty()) {
-            command = installed;
-            elevate = ElevateAlways;
-            appendLogInfo("using the command the installer set up for the service");
-        }
-
-        m_IpcClient.sendCommand(command, elevate);
+        show();
+        QMessageBox::warning(this, tr("Program can not be started"), QString(tr("The executable<br><br>%1<br><br>could not be successfully started, although it does exist. Please check if you have sufficient permissions to run this program.").arg(app)));
+        return;
     }
 }
 
-QString MainWindow::installedServiceCommand()
+void MainWindow::controlService(bool start, int tries)
 {
 #if defined(Q_OS_WIN)
-    QSettings service(QStringLiteral("HKEY_LOCAL_MACHINE\\SOFTWARE\\Leapdesk"), QSettings::NativeFormat);
-    return service.value(QStringLiteral("InstalledCommand")).toString();
+    // a stop takes a moment, and the service can't start again until it has finished,
+    // which matters when Reload stops and starts it
+    if (start && tries > 0 && leapdesk_service_state() == SERVICE_STOP_PENDING) {
+        QTimer::singleShot(500, this, [this, tries]() {
+            if (m_ExpectedRunningState == kStarted)
+                controlService(true, tries - 1);
+        });
+        return;
+    }
+
+    const QString action = start ? QStringLiteral("start") : QStringLiteral("stop");
+    DWORD error = control_leapdesk_service(start);
+
+    if (error == ERROR_ACCESS_DENIED) {
+        // installed before the service let signed-in users start and stop it, so an
+        // administrator has to, once
+        appendLogInfo(QString("asking for administrator approval to %1 the Leapdesk service").arg(action));
+        std::wstring parameters = (action + QStringLiteral(" Leapdesk")).toStdWString();
+        SHELLEXECUTEINFOW info = {};
+        info.cbSize = sizeof(info);
+        info.hwnd = reinterpret_cast<HWND>(winId());
+        info.lpVerb = L"runas";
+        info.lpFile = L"sc.exe";
+        info.lpParameters = parameters.c_str();
+        info.nShow = SW_HIDE;
+        error = ShellExecuteExW(&info) ? ERROR_SUCCESS : GetLastError();
+    }
+
+    if (error == ERROR_SUCCESS)
+        return;
+
+    QString reason = error == ERROR_SERVICE_DOES_NOT_EXIST
+        ? tr("The Leapdesk service isn't installed. Run the Leapdesk KVM installer.")
+        : error == ERROR_CANCELLED ? tr("Administrator approval was declined.")
+        : qt_error_string(static_cast<int>(error));
+    appendLogError(QString("couldn't %1 the Leapdesk service: %2").arg(action, reason));
+    if (start) {
+        m_ExpectedRunningState = kStopped;
+        set_connection_state(AppConnectionState::DISCONNECTED);
+    }
 #else
-    return QString();
+    (void) start;
+    (void) tries;
 #endif
 }
 
@@ -880,8 +924,7 @@ void MainWindow::stop_cmd_app()
 
 void MainWindow::stopService()
 {
-    // send empty command to stop service from launching anything.
-    m_IpcClient.sendCommand("", appConfig().elevateMode());
+    controlService(false);
 }
 
 void MainWindow::stopDesktop()

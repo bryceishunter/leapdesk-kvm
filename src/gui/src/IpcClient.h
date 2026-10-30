@@ -21,8 +21,6 @@
 #include <QObject>
 #include <QAbstractSocket>
 
-#include "ElevateMode.h"
-
 class QTcpSocket;
 class IpcReader;
 
@@ -35,15 +33,11 @@ public:
     virtual ~IpcClient();
 
     void sendHello();
-    void sendCommand(const QString& command, ElevateMode elevate);
     void connectToHost();
     void disconnectFromHost();
 
 public slots:
     void retryConnect();
-
-private:
-    void intToBytes(int value, char* buffer, int size);
 
 private slots:
     void connected();

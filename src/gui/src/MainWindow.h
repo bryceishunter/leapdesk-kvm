@@ -137,7 +137,9 @@ public slots:
         void createTrayIcon();
         void loadSettings();
         void loadServerConfig();
-        QString installedServiceCommand();
+        // starts or stops the Leapdesk service, asking for administrator approval if needed;
+        // a start waits up to tries half-seconds for a stop that is still going on
+        void controlService(bool start, int tries = 60);
         bool saveServerConfig();
         void saveSettings();
         void set_icon(AppConnectionState state);
