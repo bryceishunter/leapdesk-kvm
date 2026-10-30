@@ -19,9 +19,7 @@
 #include "inputleap/win32/DaemonApp.h"
 
 #include "inputleap/App.h"
-#include "inputleap/ArgParser.h"
-#include "inputleap/ServerArgs.h"
-#include "inputleap/ClientArgs.h"
+#include "inputleap/ServiceSettings.h"
 #include "ipc/IpcClientProxy.h"
 #include "ipc/IpcMessage.h"
 #include "ipc/IpcLogOutputter.h"
@@ -32,6 +30,7 @@
 #include "base/log_outputters.h"
 #include "base/Log.h"
 #include "common/DataDirectories.h"
+#include "io/filesystem.h"
 
 #include "arch/win32/ArchMiscWindows.h"
 #include "arch/win32/XArchWindows.h"
@@ -199,12 +198,7 @@ DaemonApp::mainLoop(bool daemonized)
         // install the platform event queue to handle service stop events.
         m_events->set_buffer(std::make_unique<MSWindowsEventQueueBuffer>(m_events));
 
-        std::string command = ARCH->setting("Command");
-        bool elevate = ARCH->setting("Elevate") == "1";
-        if (command != "") {
-            LOG_INFO("using last known command: %s", command.c_str());
-            m_watchdog->setCommand(command, elevate);
-        }
+        start_from_settings();
 
         m_watchdog->startAsync();
 
@@ -245,95 +239,56 @@ DaemonApp::logFilename()
     return logFilename;
 }
 
+std::string DaemonApp::program_dir()
+{
+    wchar_t path[MAX_PATH];
+    DWORD length = GetModuleFileNameW(nullptr, path, MAX_PATH);
+    if (length == 0 || length == MAX_PATH)
+        return "";
+    return fs::path(path).parent_path().u8string();
+}
+
+void DaemonApp::start_from_settings()
+{
+    auto settings = ServiceSettings::read([](const std::string& name) { return ARCH->setting(name); });
+
+    if (settings.role.empty()) {
+        // Earlier versions saved whole command lines here, including ones any local program
+        // sent over IPC, so one left over isn't run. The installer carries its screen name
+        // and server over into the settings above.
+        if (!ARCH->setting("Command").empty())
+            LOG_ERR("HKLM\\SOFTWARE\\Leapdesk holds a command line from an earlier version, "
+                    "which this one doesn't run; run the Leapdesk KVM installer to set it up again");
+        else
+            LOG_NOTE("no role is set in HKLM\\SOFTWARE\\Leapdesk, so nothing runs until one is");
+        return;
+    }
+
+    std::string problem = settings.problem();
+    std::string programs = program_dir();
+    if (problem.empty() && programs.empty())
+        problem = "this service's own folder could not be found";
+    if (!problem.empty()) {
+        LOG_ERR("nothing runs: %s; fix it in HKLM\\SOFTWARE\\Leapdesk", problem.c_str());
+        return;
+    }
+
+    std::string command = settings.command(programs);
+    LOG_NOTE("running %s", command.c_str());
+    m_watchdog->setCommand(command, settings.elevate);
+}
+
 void DaemonApp::handle_ipc_message(const Event& e)
 {
     const IpcMessage& m = e.get_data_as<IpcMessage>();
     switch (m.type()) {
-        case kIpcCommand: {
-            const IpcCommandMessage& cm = static_cast<const IpcCommandMessage&>(m);
-            std::string command = cm.command();
-
-            // if empty quotes, clear.
-            if (command == "\"\"") {
-                command.clear();
-            }
-
-            if (!command.empty()) {
-                LOG_DEBUG("new command, elevate=%d command=%s", cm.elevate(), command.c_str());
-
-                std::vector<std::string> argsArray;
-                ArgParser::splitCommandString(command, argsArray);
-                ArgParser argParser(nullptr);
-                const char** argv = argParser.getArgv(argsArray);
-                ServerArgs serverArgs;
-                ClientArgs clientArgs;
-                int argc = static_cast<int>(argsArray.size());
-                bool server = argsArray[0].find("leapdesk-server") != std::string::npos ? true : false;
-                ArgsBase* argBase = nullptr;
-
-                if (server) {
-                    argParser.parseServerArgs(serverArgs, argc, argv);
-                    argBase = &serverArgs;
-                }
-                else {
-                    argParser.parseClientArgs(clientArgs, argc, argv);
-                    argBase = &clientArgs;
-                }
-
-                delete[] argv;
-
-                std::string logLevel(argBase->m_logFilter);
-                if (!logLevel.empty()) {
-                    try {
-                        // change log level based on that in the command string
-                        // and change to that log level now.
-                        ARCH->setting("LogLevel", logLevel);
-                        CLOG->setFilter(logLevel.c_str());
-                    }
-                    catch (std::runtime_error& e) {
-                        LOG_ERR("failed to save LogLevel setting, %s", e.what());
-                    }
-                }
-
-                // eg. no log-to-file while running in foreground
-                if (m_fileLogOutputter != nullptr) {
-                    std::string logFilename;
-                    if (argBase->m_logFile != nullptr) {
-                        logFilename = std::string(argBase->m_logFile);
-                        ARCH->setting("LogFilename", logFilename);
-                        m_watchdog->setFileLogOutputter(m_fileLogOutputter);
-                        command = ArgParser::assembleCommand(argsArray, "--log", 1);
-                        LOG_DEBUG("removed log file argument and filename %s from command ", logFilename.c_str());
-                        LOG_DEBUG("new command, elevate=%d command=%s", cm.elevate(), command.c_str());
-                    } else {
-                        m_watchdog->setFileLogOutputter(nullptr);
-                    }
-                    m_fileLogOutputter->setLogFilename(logFilename.c_str());
-                }
-            }
-            else {
-                LOG_DEBUG("empty command, elevate=%d", cm.elevate());
-            }
-
-            try {
-                // store command in system settings. this is used when the daemon
-                // next starts.
-                ARCH->setting("Command", command);
-
-                // TODO: it would be nice to store bools/ints...
-                ARCH->setting("Elevate", std::string(cm.elevate() ? "1" : "0"));
-            }
-            catch (std::runtime_error& e) {
-                LOG_ERR("failed to save settings, %s", e.what());
-            }
-
-            // tell the relauncher about the new command. this causes the
-            // relauncher to stop the existing command and start the new
-            // command.
-            m_watchdog->setCommand(command, cm.elevate());
-
+        case kIpcCommand:
+            // Any local program can connect here, and the service runs commands with its own
+            // rights, so it never runs one it is sent. What it runs comes only from
+            // HKLM\SOFTWARE\Leapdesk, which only administrators can change.
+            LOG_WARN("ignored a command sent to the service; it runs only what "
+                     "HKLM\\SOFTWARE\\Leapdesk sets up");
             break;
-        }
 
         case kIpcHello:
             const auto& hm = static_cast<const IpcHelloMessage&>(m);

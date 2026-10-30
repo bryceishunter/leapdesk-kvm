@@ -53,7 +53,9 @@ ArchSystemWindows::setting(const std::string& valueName) const
     if (key == nullptr)
         return "";
 
-    return ArchMiscWindows::readValueString(key, valueName.c_str());
+    std::string value = ArchMiscWindows::readValueString(key, valueName.c_str());
+    ArchMiscWindows::closeKey(key);
+    return value;
 }
 
 void
@@ -63,6 +65,7 @@ ArchSystemWindows::setting(const std::string& valueName, const std::string& valu
     if (key == nullptr)
         throw std::runtime_error(std::string("could not access registry key: ") + valueName);
     ArchMiscWindows::setValue(key, valueName.c_str(), valueString.c_str());
+    ArchMiscWindows::closeKey(key);
 }
 
 } // namespace inputleap

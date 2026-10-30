@@ -44,10 +44,8 @@
 
 #if Role == "Server"
   #define RoleExe "leapdesk-server.exe"
-  #define RoleLog "server.log"
 #else
   #define RoleExe "leapdesk-client.exe"
-  #define RoleLog "client.log"
 #endif
 
 #ifndef OutputName
@@ -347,20 +345,6 @@ begin
   end;
 end;
 
-function ServiceCommand(): String;
-begin
-  Result := '"' + ExpandConstant('{app}\{#RoleExe}') + '" -f --no-tray --ipc --debug ' + LogLevel() +
-            ' --name ' + ScreenName() +
-            ' --profile-dir "' + ProfileDir() + '"' +
-            ' --log "' + ProfileDir() + '\{#RoleLog}"';
-#if Role == "Server"
-  Result := Result + ' -c "' + ConfigPath() + '"';
-#else
-  // the server address has to be the last argument
-  Result := Result + ' ' + ServerAddress();
-#endif
-end;
-
 function IsValidScreenName(const Name: String): Boolean;
 var
   I: Integer;
@@ -373,17 +357,23 @@ end;
 
 procedure InitializeWizard();
 var
-  PreviousName: String;
+  PreviousName, PreviousServer: String;
 begin
+  // this version's settings, then the command lines earlier versions saved instead
+  RegQueryStringValue(HKLM, 'SOFTWARE\Leapdesk', 'ScreenName', PreviousName);
+  RegQueryStringValue(HKLM, 'SOFTWARE\Leapdesk', 'ServerAddress', PreviousServer);
   RegQueryStringValue(HKLM, 'SOFTWARE\Leapdesk', 'InstalledCommand', PreviousCommand);
   if PreviousCommand = '' then
     RegQueryStringValue(HKLM, 'SOFTWARE\Leapdesk', 'Command', PreviousCommand);
   RegQueryStringValue(HKLM, 'SOFTWARE\InputLeap', 'Command', PreviousLegacyCommand);
+  Log('Previous screen name and server: ' + PreviousName + ', ' + PreviousServer);
   Log('Previous command: ' + PreviousCommand);
   Log('Previous Input Leap command: ' + PreviousLegacyCommand);
 
-  PreviousName := FirstNonEmpty(OptionValue(PreviousCommand, '-n', '--name'),
-                                OptionValue(PreviousLegacyCommand, '-n', '--name'), '');
+  PreviousName := FirstNonEmpty(PreviousName, OptionValue(PreviousCommand, '-n', '--name'),
+                                OptionValue(PreviousLegacyCommand, '-n', '--name'));
+  PreviousServer := FirstNonEmpty(PreviousServer, CommandServer(PreviousCommand),
+                                  CommandServer(PreviousLegacyCommand));
 
 #if Role == "Server"
   SettingsPage := CreateInputQueryPage(wpWelcome, 'Server settings',
@@ -398,8 +388,7 @@ begin
   SettingsPage.Add('&Server address (host or host:port):', False);
   SettingsPage.Values[1] := ExpandConstant('{param:SERVER|}');
   if SettingsPage.Values[1] = '' then
-    SettingsPage.Values[1] := FirstNonEmpty(CommandServer(PreviousCommand),
-                                            CommandServer(PreviousLegacyCommand), '{#DefaultServer}');
+    SettingsPage.Values[1] := FirstNonEmpty(PreviousServer, '{#DefaultServer}', '');
 #endif
   SettingsPage.Values[0] := ExpandConstant('{param:NAME|}');
   if SettingsPage.Values[0] = '' then
@@ -664,14 +653,19 @@ end;
 
 procedure InstallService();
 var
-  BinPath: String;
+  Key, BinPath: String;
 begin
-  // the service runs the command below as SYSTEM in the signed-in session; the
-  // settings window reuses InstalledCommand to start it again after a stop
-  RegWriteStringValue(HKLM, 'SOFTWARE\Leapdesk', 'Command', ServiceCommand());
-  RegWriteStringValue(HKLM, 'SOFTWARE\Leapdesk', 'Elevate', '1');
-  RegWriteStringValue(HKLM, 'SOFTWARE\Leapdesk', 'InstalledCommand', ServiceCommand());
-  RegWriteStringValue(HKLM, 'SOFTWARE\Leapdesk', 'InstalledRole', '{#Role}');
+  // the service builds the command it runs as SYSTEM in the signed-in session from these,
+  // with the programs installed next to it; only administrators can change them
+  Key := 'SOFTWARE\Leapdesk';
+  RegWriteStringValue(HKLM, Key, 'Role', '{#Role}');
+  RegWriteStringValue(HKLM, Key, 'ScreenName', ScreenName());
+#if Role == "Client"
+  RegWriteStringValue(HKLM, Key, 'ServerAddress', ServerAddress());
+#endif
+  RegWriteStringValue(HKLM, Key, 'LogLevel', LogLevel());
+  RegWriteStringValue(HKLM, Key, 'ProfileDir', ProfileDir());
+  RegWriteStringValue(HKLM, Key, 'Elevate', '1');
 
   BinPath := 'binPath= "\"' + ExpandConstant('{app}\leapdesk-daemon.exe') + '\"" start= auto type= own';
   if ServiceState('{#ServiceName}') = 'MISSING' then
@@ -682,6 +676,11 @@ begin
   // come back after a crash: 5 seconds, then 10, then a minute; start counting again after a day
   Sc('failure {#ServiceName} reset= 86400 actions= restart/5000/restart/10000/restart/60000');
   Sc('failureflag {#ServiceName} 1');
+  // Windows' default permissions, plus start (RP) and stop (WP) for signed-in users so the
+  // settings window can start and stop it without a prompt.  Changing what it runs (DC)
+  // stays with administrators.
+  Sc('sdset {#ServiceName} D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)' +
+     '(A;;CCLCSWRPWPLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)');
   Sc('start {#ServiceName}');
 
   if WaitForServiceState('{#ServiceName}', 'RUNNING', 20) then
