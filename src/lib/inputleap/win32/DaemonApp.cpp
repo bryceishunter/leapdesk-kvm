@@ -29,6 +29,7 @@
 #include "base/EventQueue.h"
 #include "base/log_outputters.h"
 #include "base/Log.h"
+#include "base/finally.h"
 #include "common/DataDirectories.h"
 #include "io/filesystem.h"
 
@@ -119,6 +120,9 @@ DaemonApp::run(int argc, char** argv)
             else if (arg == "/uninstall") {
                 arch.uninstallDaemon();
                 return kExitSuccess;
+            }
+            else if (arg == "/configure") {
+                return configure(std::vector<std::string>(argv + i + 1, argv + argc));
             }
             else {
                 std::stringstream ss;
@@ -237,6 +241,71 @@ DaemonApp::logFilename()
         logFilename = (inputleap::DataDirectories::global() / LOG_FILENAME).u8string();
     MSWindowsUtil::createDirectory(logFilename, true);
     return logFilename;
+}
+
+namespace {
+
+// Stops the Leapdesk service if it is running, waits for that, and starts it.
+void restart_service()
+{
+    SC_HANDLE manager = OpenSCManager(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (manager == nullptr)
+        throw std::runtime_error("Couldn't reach the service manager: " +
+                                 error_code_to_string_windows(GetLastError()));
+    auto close_manager = finally([&] { CloseServiceHandle(manager); });
+
+    SC_HANDLE service = OpenService(manager, "Leapdesk",
+                                    SERVICE_START | SERVICE_STOP | SERVICE_QUERY_STATUS);
+    if (service == nullptr)
+        throw std::runtime_error("Couldn't open the Leapdesk service: " +
+                                 error_code_to_string_windows(GetLastError()));
+    auto close_service = finally([&] { CloseServiceHandle(service); });
+
+    SERVICE_STATUS status;
+    if (!ControlService(service, SERVICE_CONTROL_STOP, &status) &&
+        GetLastError() != ERROR_SERVICE_NOT_ACTIVE) {
+        throw std::runtime_error("Couldn't stop the Leapdesk service: " +
+                                 error_code_to_string_windows(GetLastError()));
+    }
+
+    // the service gives its server or client 20 seconds to exit
+    for (int i = 0; i < 60 && QueryServiceStatus(service, &status) &&
+                    status.dwCurrentState != SERVICE_STOPPED; ++i) {
+        Sleep(500);
+    }
+
+    if (!StartService(service, 0, nullptr))
+        throw std::runtime_error("Couldn't start the Leapdesk service: " +
+                                 error_code_to_string_windows(GetLastError()));
+}
+
+} // namespace
+
+int DaemonApp::configure(const std::vector<std::string>& arguments)
+{
+    auto read = [](const std::string& name) { return ARCH->setting(name); };
+    auto settings = ServiceSettings::read(read);
+
+    std::string problem = settings.apply_arguments(arguments);
+    if (problem.empty())
+        problem = settings.problem();
+    if (!problem.empty()) {
+        foregroundError(("The settings weren't changed: " + problem + ".").c_str());
+        return kExitArgs;
+    }
+
+    settings.write([](const std::string& name, const std::string& value) { ARCH->setting(name, value); });
+
+    // writing the registry reports no errors, and without these the service runs nothing
+    auto stored = ServiceSettings::read(read);
+    if (stored.role != settings.role || stored.screen_name != settings.screen_name ||
+        stored.profile_dir != settings.profile_dir) {
+        foregroundError("The settings couldn't be stored in HKLM\\SOFTWARE\\Leapdesk.");
+        return kExitFailed;
+    }
+
+    restart_service();
+    return kExitSuccess;
 }
 
 std::string DaemonApp::program_dir()

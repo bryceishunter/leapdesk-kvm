@@ -23,6 +23,7 @@
 #include "ipc/IpcServer.h"
 
 #include <string>
+#include <vector>
 
 namespace inputleap {
 
@@ -43,6 +44,9 @@ private:
     std::string logFilename();
     // the folder this program was started from, which holds the server and client
     static std::string program_dir();
+    // stores the settings the arguments give in HKLM\SOFTWARE\Leapdesk and restarts the
+    // service so they apply; the settings window runs this elevated
+    int configure(const std::vector<std::string>& arguments);
     // gives the watchdog the command that HKLM\SOFTWARE\Leapdesk sets up, if any
     void start_from_settings();
     void handle_ipc_message(const Event& event);

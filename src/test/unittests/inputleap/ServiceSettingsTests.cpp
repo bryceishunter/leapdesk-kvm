@@ -19,6 +19,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <map>
 #include <vector>
 
@@ -187,7 +188,85 @@ TEST(ServiceSettingsTests, needsAFullProfileFolder)
     EXPECT_EQ(settings.problem(), "");
 }
 
+TEST(ServiceSettingsTests, writesWhatItReads)
+{
+    std::map<std::string, std::string> values;
+    auto settings = client();
+    settings.log_level = "DEBUG";
+    settings.elevate = false;
+    settings.write([&](const std::string& name, const std::string& value) { values[name] = value; });
+
+    auto again = read(values);
+    EXPECT_EQ(again.role, "Client");
+    EXPECT_EQ(again.screen_name, "surfacestudio");
+    EXPECT_EQ(again.server_address, "100.111.152.25:24800");
+    EXPECT_EQ(again.log_level, "DEBUG");
+    EXPECT_EQ(again.profile_dir, kProfile);
+    EXPECT_FALSE(again.elevate);
+}
+
+TEST(ServiceSettingsTests, aServerClearsAnAddressLeftFromBeingAClient)
+{
+    std::map<std::string, std::string> values;
+    auto settings = client();
+    settings.role = "Server";
+    settings.write([&](const std::string& name, const std::string& value) { values[name] = value; });
+
+    EXPECT_EQ(values["ServerAddress"], "");
+}
+
+TEST(ServiceSettingsTests, argumentsChangeOnlyWhatTheyName)
+{
+    auto settings = client();
+    settings.log_level = "DEBUG";
+
+    EXPECT_EQ(settings.apply_arguments({"--role", "server", "--name", "desk"}), "");
+
+    EXPECT_EQ(settings.role, "Server");
+    EXPECT_EQ(settings.screen_name, "desk");
+    EXPECT_EQ(settings.log_level, "DEBUG");
+    EXPECT_EQ(settings.profile_dir, kProfile);
+}
+
+TEST(ServiceSettingsTests, refusesUnknownOrIncompleteArguments)
+{
+    auto settings = client();
+    EXPECT_EQ(settings.apply_arguments({"--command", "calc.exe"}), "unknown option --command");
+    EXPECT_EQ(settings.apply_arguments({"--name"}), "nothing follows --name");
+}
+
 #ifdef _WIN32
+TEST(ServiceSettingsTests, configureArgumentsSurviveTheCommandLine)
+{
+    auto original = client();
+    original.log_level = "INFO";
+
+    std::string command = "leapdesk-daemon.exe " + original.configure_arguments();
+    int count = 0;
+    std::wstring wide(command.begin(), command.end());
+    wchar_t** split = CommandLineToArgvW(wide.c_str(), &count);
+    ASSERT_NE(split, nullptr);
+    std::vector<std::string> arguments;
+    for (int i = 1; i < count; ++i) {
+        std::wstring argument(split[i]);
+        for (wchar_t c : argument)
+            ASSERT_LT(c, 128);
+        arguments.emplace_back(argument.size(), '\0');
+        std::transform(argument.begin(), argument.end(), arguments.back().begin(),
+                       [](wchar_t c) { return static_cast<char>(c); });
+    }
+    LocalFree(split);
+
+    ServiceSettings parsed;
+    ASSERT_EQ(parsed.apply_arguments(arguments), "");
+    EXPECT_EQ(parsed.role, "Client");
+    EXPECT_EQ(parsed.screen_name, "surfacestudio");
+    EXPECT_EQ(parsed.server_address, "100.111.152.25:24800");
+    EXPECT_EQ(parsed.log_level, "INFO");
+    EXPECT_EQ(parsed.profile_dir, kProfile);
+    EXPECT_EQ(parsed.problem(), "");
+}
+
 TEST(ServiceSettingsTests, windowsSplitsTheCommandIntoTheIntendedArguments)
 {
     auto settings = client();

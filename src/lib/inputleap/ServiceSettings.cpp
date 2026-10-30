@@ -42,6 +42,15 @@ std::string upper(std::string text)
     return text;
 }
 
+std::string normalised_role(const std::string& role)
+{
+    if (upper(role) == "SERVER")
+        return "Server";
+    if (upper(role) == "CLIENT")
+        return "Client";
+    return role;
+}
+
 bool is_log_level(const std::string& level)
 {
     return std::find_if(std::begin(kLogLevels), std::end(kLogLevels),
@@ -101,12 +110,7 @@ ServiceSettings ServiceSettings::read(const Reader& setting)
 {
     ServiceSettings settings;
 
-    settings.role = trimmed(setting("Role"));
-    if (upper(settings.role) == "SERVER")
-        settings.role = "Server";
-    else if (upper(settings.role) == "CLIENT")
-        settings.role = "Client";
-
+    settings.role = normalised_role(trimmed(setting("Role")));
     settings.screen_name = trimmed(setting("ScreenName"));
     settings.server_address = trimmed(setting("ServerAddress"));
     std::string level = upper(trimmed(setting("LogLevel")));
@@ -115,6 +119,16 @@ ServiceSettings ServiceSettings::read(const Reader& setting)
     settings.profile_dir = trimmed(setting("ProfileDir"));
     settings.elevate = trimmed(setting("Elevate")) != "0";
     return settings;
+}
+
+void ServiceSettings::write(const Writer& setting) const
+{
+    setting("Role", role);
+    setting("ScreenName", screen_name);
+    setting("ServerAddress", is_server() ? "" : server_address);
+    setting("LogLevel", log_level);
+    setting("ProfileDir", profile_dir);
+    setting("Elevate", elevate ? "1" : "0");
 }
 
 std::string ServiceSettings::problem() const
@@ -160,6 +174,39 @@ std::string ServiceSettings::command(const std::string& program_dir) const
         return command + " -c " + quoted(profile + "\\leapdesk.sgc");
     // the server address has to be the last argument
     return command + " " + server_address;
+}
+
+std::string ServiceSettings::configure_arguments() const
+{
+    std::string arguments = "--role " + quoted(role) + " --name " + quoted(screen_name) +
+        " --log-level " + quoted(log_level) + " --profile-dir " + quoted(profile_dir);
+    if (!is_server())
+        arguments += " --server " + quoted(server_address);
+    return arguments;
+}
+
+std::string ServiceSettings::apply_arguments(const std::vector<std::string>& arguments)
+{
+    for (std::size_t i = 0; i < arguments.size(); i += 2) {
+        const std::string& option = arguments[i];
+        if (i + 1 == arguments.size())
+            return "nothing follows " + option;
+        const std::string value = trimmed(arguments[i + 1]);
+
+        if (option == "--role")
+            role = normalised_role(value);
+        else if (option == "--name")
+            screen_name = value;
+        else if (option == "--server")
+            server_address = value;
+        else if (option == "--log-level")
+            log_level = upper(value);
+        else if (option == "--profile-dir")
+            profile_dir = value;
+        else
+            return "unknown option " + option;
+    }
+    return "";
 }
 
 } // namespace inputleap
