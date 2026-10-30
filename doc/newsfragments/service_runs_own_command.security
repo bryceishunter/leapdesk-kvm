@@ -3,8 +3,8 @@ where any local program could connect and have a program run with the
 service's rights. It builds the server or client command itself, with the
 programs in its own folder, from settings only administrators can change:
 Role, ScreenName, ServerAddress, LogLevel and ProfileDir in
-HKLM\SOFTWARE\Leapdesk, which the installers now write. A command line saved
-by an earlier version isn't run, since it may have come over IPC; running the
-installer again carries its screen name and server over. The settings window
-starts and stops the service through Windows instead, which the installers let
-signed-in users do.
+HKLM\SOFTWARE\Leapdesk, which the installer and `leapdesk-daemon.exe /configure`
+write. A command line saved by an earlier version isn't run, since it may have
+come over IPC; running the installer again carries its screen name and server
+over. The settings window starts and stops the service through Windows instead,
+which the installer lets signed-in users do.

@@ -1,5 +1,4 @@
-Windows server and client installers, built with `dist/inno/build-installers.ps1`.
-They stop and remove earlier Leapdesk and Input Leap services and installs,
-install afresh, move an Input Leap pairing certificate and configuration over,
-and set the Leapdesk service to restart after a crash. The server installer
-includes the settings window.
+A Windows installer, built with `dist/inno/build-installers.ps1`. It stops and
+removes earlier Leapdesk and Input Leap services and installs, installs afresh,
+moves an Input Leap pairing certificate and configuration over, and sets the
+Leapdesk service to restart after a crash.

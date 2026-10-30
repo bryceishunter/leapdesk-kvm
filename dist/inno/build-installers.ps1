@@ -1,21 +1,18 @@
-# Builds the Leapdesk KVM server and client installers for Windows.
+# Builds the Leapdesk KVM installer for Windows.
 #
 #   dist\inno\build-installers.ps1 [-BuildDir build] [-OutputDir <folder>]
-#                                  [-SeedConfig <server .sgc>] [-DefaultServer <host:port>]
-#                                  [-SkipBuild]
+#                                  [-SeedConfig <server .sgc>] [-SkipBuild]
 #
 # The build directory must be configured with the GUI (INPUTLEAP_BUILD_GUI=ON) and Qt
-# on CMAKE_PREFIX_PATH, since the server installer includes the settings window. Inno
+# on CMAKE_PREFIX_PATH, since the installer includes the Leapdesk KVM window. Inno
 # Setup 6 is needed too: winget install JRSoftware.InnoSetup --scope user
 #
-# -SeedConfig is the server configuration installed on a machine that has none yet;
-# -DefaultServer is the server address the client installer offers. Neither holds
-# anything secret: pairing certificates are never built into the installers.
+# -SeedConfig is the server configuration installed on a machine that has none yet.
+# It holds nothing secret: pairing certificates are never built into the installer.
 param(
     [string]$BuildDir,
     [string]$OutputDir,
     [string]$SeedConfig,
-    [string]$DefaultServer,
     [string]$Iscc,
     [switch]$SkipBuild
 )
@@ -70,28 +67,22 @@ $script = Join-Path $BuildDir 'installer-inno\leapdesk-kvm.iss'
 # check the installer's own code first: selftest.iss runs it without installing anything
 $selfTestDir = Join-Path $BuildDir 'installer-selftest'
 New-Item -ItemType Directory -Force $selfTestDir | Out-Null
-foreach ($role in 'Server', 'Client') {
-    Invoke-Checked "Compiling the $role self-test" {
-        & $Iscc /Q "/DRole=$role" "/DStagingDir=$staging" "/DOutputDir=$selfTestDir" `
-            (Join-Path $BuildDir 'installer-inno\selftest.iss')
-    }
-    $log = Join-Path $selfTestDir "selftest-$role.log"
-    Start-Process (Join-Path $selfTestDir 'LeapdeskKVM-selftest.exe') -ArgumentList "/LOG=`"$log`"" -Wait
-    $results = Select-String -Path $log -Pattern ' (PASS|FAIL) ' | ForEach-Object { $_.Line -replace '^.*? (PASS|FAIL) ', '$1 ' }
-    $failures = @($results | Where-Object { $_ -like 'FAIL *' })
-    "$role self-test: $(@($results).Count - $failures.Count) passed, $($failures.Count) failed"
-    if ($failures.Count -gt 0 -or @($results).Count -eq 0) {
-        $failures | ForEach-Object { "  $_" }
-        throw "The installer self-test failed; see $log"
-    }
+Invoke-Checked 'Compiling the self-test' {
+    & $Iscc /Q "/DStagingDir=$staging" "/DOutputDir=$selfTestDir" (Join-Path $BuildDir 'installer-inno\selftest.iss')
+}
+$log = Join-Path $selfTestDir 'selftest.log'
+Start-Process (Join-Path $selfTestDir 'LeapdeskKVM-selftest.exe') -ArgumentList "/LOG=`"$log`"" -Wait
+$results = Select-String -Path $log -Pattern ' (PASS|FAIL) ' | ForEach-Object { $_.Line -replace '^.*? (PASS|FAIL) ', '$1 ' }
+$failures = @($results | Where-Object { $_ -like 'FAIL *' })
+"Self-test: $(@($results).Count - $failures.Count) passed, $($failures.Count) failed"
+if ($failures.Count -gt 0 -or @($results).Count -eq 0) {
+    $failures | ForEach-Object { "  $_" }
+    throw "The installer self-test failed; see $log"
 }
 
-foreach ($role in 'Server', 'Client') {
-    $defines = @("/DRole=$role", "/DStagingDir=$staging", "/DOutputDir=$OutputDir", "/DRevision=$revision")
-    if ($SeedConfig) { $defines += "/DSeedConfig=$SeedConfig" }
-    if ($DefaultServer) { $defines += "/DDefaultServer=$DefaultServer" }
-    Invoke-Checked "Compiling the $role installer" { & $Iscc /Q @defines $script }
-}
+$defines = @("/DStagingDir=$staging", "/DOutputDir=$OutputDir", "/DRevision=$revision")
+if ($SeedConfig) { $defines += "/DSeedConfig=$SeedConfig" }
+Invoke-Checked 'Compiling the installer' { & $Iscc /Q @defines $script }
 
 Get-ChildItem $OutputDir -Filter "LeapdeskKVM-*-$revision.exe" |
     ForEach-Object { '{0}  {1:N1} MB' -f $_.FullName, ($_.Length / 1MB) }

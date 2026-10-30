@@ -1,14 +1,17 @@
-; Leapdesk KVM installer for Windows, built as a server or a client installer.
+; Leapdesk KVM installer for Windows.
 ;
 ; Build it with dist/inno/build-installers.ps1, which stages the binaries with
-; `cmake --install` and compiles this script once per role. CMake fills in the
-; version and source paths; the build script passes the rest:
-;   Role           Server or Client
+; `cmake --install` and compiles this script. CMake fills in the version and source
+; paths; the build script passes the rest:
 ;   StagingDir     output of cmake --install
-;   OutputDir      where the installers go
+;   OutputDir      where the installer goes
 ;   Revision       git revision, for the file name
-;   SeedConfig     optional, server: configuration to install when the machine has none
-;   DefaultServer  optional, client: server address offered by default
+;   SeedConfig     optional: server configuration to install when the machine has none
+;
+; Every computer gets every program, and whether it is a server or a client is a setting.
+; An upgrade keeps the role it had. A new install leaves it for the Leapdesk KVM window to
+; ask, unless the command line gives it, as a silent install does:
+;   /ROLE=Server|Client  /NAME=<screen name>  /SERVER=<host or host:port>  /LOGLEVEL=<level>
 ;
 ; Installing stops and removes earlier Leapdesk and Input Leap services and
 ; installations, then installs the binaries afresh and registers the Leapdesk service.
@@ -23,12 +26,6 @@
 #define ServiceName "Leapdesk"
 #define FirewallRule "Leapdesk KVM server"
 
-#ifndef Role
-  #error Define Role as Server or Client; build with dist/inno/build-installers.ps1
-#endif
-#if Role != "Server" && Role != "Client"
-  #error Role must be Server or Client
-#endif
 #ifndef StagingDir
   #error Define StagingDir as the output of cmake --install
 #endif
@@ -38,21 +35,11 @@
 #ifndef Revision
   #define Revision ""
 #endif
-#ifndef DefaultServer
-  #define DefaultServer ""
-#endif
-
-#if Role == "Server"
-  #define RoleExe "leapdesk-server.exe"
-#else
-  #define RoleExe "leapdesk-client.exe"
-#endif
-
 #ifndef OutputName
   #if Revision != ""
-    #define OutputName "LeapdeskKVM-" + Role + "-" + MyAppVersion + "-" + Revision
+    #define OutputName "LeapdeskKVM-" + MyAppVersion + "-" + Revision
   #else
-    #define OutputName "LeapdeskKVM-" + Role + "-" + MyAppVersion
+    #define OutputName "LeapdeskKVM-" + MyAppVersion
   #endif
 #endif
 
@@ -60,8 +47,8 @@
 AppId={{41036EA6-3F7A-4803-8AE0-46912391EFCC}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
-AppVerName={#MyAppName} {#Role} {#MyAppVersion}
-UninstallDisplayName={#MyAppName} ({#Role})
+AppVerName={#MyAppName} {#MyAppVersion}
+UninstallDisplayName={#MyAppName}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
@@ -83,11 +70,7 @@ OutputBaseFilename={#OutputName}
 SetupIconFile={#RepoDir}\res\leapdesk.ico
 ; one per display scale from 100% to 250%; Setup picks the closest.  made by res\make-icons.py
 WizardSmallImageFile={#RepoDir}\dist\inno\wizard-small-55.bmp,{#RepoDir}\dist\inno\wizard-small-69.bmp,{#RepoDir}\dist\inno\wizard-small-83.bmp,{#RepoDir}\dist\inno\wizard-small-96.bmp,{#RepoDir}\dist\inno\wizard-small-110.bmp,{#RepoDir}\dist\inno\wizard-small-138.bmp
-#if Role == "Server"
 UninstallDisplayIcon={app}\leapdesk.exe
-#else
-UninstallDisplayIcon={app}\{#RoleExe}
-#endif
 WizardStyle=modern
 Compression=lzma2/max
 SolidCompression=yes
@@ -101,38 +84,36 @@ VersionInfoVersion={#MyAppVersion}
 VersionInfoProductName={#MyAppName}
 
 [Files]
-#if Role == "Server"
 Source: "{#StagingDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; \
-    Excludes: "leapdesk-client.exe,api-ms-win-*.dll,ucrtbase.dll,opengl32sw.dll,dxcompiler.dll,dxil.dll"
-  #ifdef SeedConfig
+    Excludes: "api-ms-win-*.dll,ucrtbase.dll,opengl32sw.dll,dxcompiler.dll,dxil.dll"
+#ifdef SeedConfig
 Source: "{#SeedConfig}"; DestName: "seed.sgc"; Flags: dontcopy
-  #endif
-#else
-Source: "{#StagingDir}\leapdesk-daemon.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#StagingDir}\leapdesk-client.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#StagingDir}\msvcp140*.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#StagingDir}\vcruntime140*.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#StagingDir}\concrt140.dll"; DestDir: "{app}"; Flags: ignoreversion
 #endif
 
-#if Role == "Server"
+[InstallDelete]
+; the name of this shortcut in earlier versions
+Type: files; Name: "{commonprograms}\Leapdesk KVM Settings.lnk"
+
 [Icons]
-Name: "{commonprograms}\Leapdesk KVM Settings"; Filename: "{app}\leapdesk.exe"
+Name: "{commonprograms}\Leapdesk KVM"; Filename: "{app}\leapdesk.exe"
 
 [Run]
-Filename: "{app}\leapdesk.exe"; Description: "Open the Leapdesk KVM settings"; \
-    Flags: nowait postinstall skipifsilent runasoriginaluser unchecked
-#endif
+Filename: "{app}\leapdesk.exe"; Description: "Open Leapdesk KVM"; \
+    Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [Code]
 const
   LegacyServiceName = 'InputLeap';
 
 var
-  SettingsPage: TInputQueryWizardPage;
   // the command lines of what was installed before, read before anything is removed
   PreviousCommand: String;
   PreviousLegacyCommand: String;
+  // what to set the service up with; no role leaves that to the Leapdesk KVM window
+  InstallRole: String;
+  InstallName: String;
+  InstallServer: String;
+  InstallLogLevel: String;
   // shown on the last page, and logged
   Notes: String;
 
@@ -320,24 +301,32 @@ begin
   Result := ProfileDir() + '\leapdesk.sgc';
 end;
 
-function ScreenName(): String;
+// Server or Client whatever the case, or the text as it was given
+function NormalRole(const Role: String): String;
 begin
-  Result := Trim(SettingsPage.Values[0]);
+  if CompareText(Role, 'Server') = 0 then
+    Result := 'Server'
+  else if CompareText(Role, 'Client') = 0 then
+    Result := 'Client'
+  else
+    Result := Role;
 end;
 
-function ServerAddress(): String;
+// which program a command line from an earlier version ran
+function CommandRole(const Command: String): String;
 begin
-#if Role == "Client"
-  Result := Trim(SettingsPage.Values[1]);
-#else
   Result := '';
-#endif
+  if IsClientCommand(Command) then
+    Result := 'Client'
+  else if (Pos('leapdesk-server', Lowercase(Command)) > 0) or (Pos('input-leaps', Lowercase(Command)) > 0) then
+    Result := 'Server';
 end;
 
-// /LOGLEVEL=DEBUG on the installer's command line makes the service log more
-function LogLevel(): String;
+// /LOGLEVEL=DEBUG on the installer's command line makes the service log more;
+// otherwise it keeps logging as it did
+function ChooseLogLevel(const Requested, Previous: String): String;
 begin
-  Result := Uppercase(ExpandConstant('{param:LOGLEVEL|NOTE}'));
+  Result := Uppercase(FirstNonEmpty(Requested, Previous, 'NOTE'));
   if Pos(',' + Result + ',', ',FATAL,ERROR,WARNING,NOTE,INFO,DEBUG,DEBUG1,DEBUG2,') = 0 then
   begin
     Log('Unknown log level ' + Result + ', using NOTE');
@@ -355,68 +344,78 @@ begin
       Result := False;
 end;
 
-procedure InitializeWizard();
-var
-  PreviousName, PreviousServer: String;
+// why the service can't run with these, or nothing
+function SettingsProblem(const Role, Name, Server: String): String;
 begin
-  // this version's settings, then the command lines earlier versions saved instead
-  RegQueryStringValue(HKLM, 'SOFTWARE\Leapdesk', 'ScreenName', PreviousName);
-  RegQueryStringValue(HKLM, 'SOFTWARE\Leapdesk', 'ServerAddress', PreviousServer);
+  Result := '';
+  if (Role <> 'Server') and (Role <> 'Client') then
+    Result := 'The role has to be Server or Client, not "' + Role + '".'
+  else if not IsValidScreenName(Name) then
+    Result := 'The screen name may use letters, digits, hyphens, underscores and dots.'
+  else if (Role = 'Client') and ((Server = '') or (Pos(' ', Server) > 0) or (Server[1] = '-')) then
+    Result := 'A client needs the server''s address, for example 100.111.152.25 or 100.111.152.25:24800.';
+end;
+
+function InitializeSetup(): Boolean;
+var
+  RoleParam, NameParam, ServerParam, Value, Problem: String;
+begin
+  Result := True;
   RegQueryStringValue(HKLM, 'SOFTWARE\Leapdesk', 'InstalledCommand', PreviousCommand);
   if PreviousCommand = '' then
     RegQueryStringValue(HKLM, 'SOFTWARE\Leapdesk', 'Command', PreviousCommand);
   RegQueryStringValue(HKLM, 'SOFTWARE\InputLeap', 'Command', PreviousLegacyCommand);
-  Log('Previous screen name and server: ' + PreviousName + ', ' + PreviousServer);
   Log('Previous command: ' + PreviousCommand);
   Log('Previous Input Leap command: ' + PreviousLegacyCommand);
 
-  PreviousName := FirstNonEmpty(PreviousName, OptionValue(PreviousCommand, '-n', '--name'),
-                                OptionValue(PreviousLegacyCommand, '-n', '--name'));
-  PreviousServer := FirstNonEmpty(PreviousServer, CommandServer(PreviousCommand),
-                                  CommandServer(PreviousLegacyCommand));
+  RoleParam := NormalRole(ExpandConstant('{param:ROLE|}'));
+  NameParam := ExpandConstant('{param:NAME|}');
+  ServerParam := ExpandConstant('{param:SERVER|}');
 
-#if Role == "Server"
-  SettingsPage := CreateInputQueryPage(wpWelcome, 'Server settings',
-    'How this computer is known to its clients.',
-    'The screen name must match this computer''s name in the server configuration.');
-  SettingsPage.Add('Screen &name of this computer:', False);
-#else
-  SettingsPage := CreateInputQueryPage(wpWelcome, 'Client settings',
-    'How this computer finds the server.',
-    'The screen name must match this computer''s name in the server''s configuration.');
-  SettingsPage.Add('Screen &name of this computer:', False);
-  SettingsPage.Add('&Server address (host or host:port):', False);
-  SettingsPage.Values[1] := ExpandConstant('{param:SERVER|}');
-  if SettingsPage.Values[1] = '' then
-    SettingsPage.Values[1] := FirstNonEmpty(PreviousServer, '{#DefaultServer}', '');
-#endif
-  SettingsPage.Values[0] := ExpandConstant('{param:NAME|}');
-  if SettingsPage.Values[0] = '' then
-    SettingsPage.Values[0] := FirstNonEmpty(PreviousName, GetComputerNameString(), '');
-end;
+  // the command line, then this version's settings, then the command lines earlier versions saved
+  Value := '';
+  RegQueryStringValue(HKLM, 'SOFTWARE\Leapdesk', 'Role', Value);
+  InstallRole := FirstNonEmpty(RoleParam, NormalRole(Value),
+                               FirstNonEmpty(CommandRole(PreviousCommand), CommandRole(PreviousLegacyCommand), ''));
+  // only a client takes a server address
+  if (RoleParam = '') and (ServerParam <> '') then
+    InstallRole := 'Client';
 
-function NextButtonClick(CurPageID: Integer): Boolean;
-begin
-  Result := True;
-  if CurPageID <> SettingsPage.ID then
+  Value := '';
+  RegQueryStringValue(HKLM, 'SOFTWARE\Leapdesk', 'ScreenName', Value);
+  InstallName := FirstNonEmpty(NameParam, Value,
+                               FirstNonEmpty(OptionValue(PreviousCommand, '-n', '--name'),
+                                             OptionValue(PreviousLegacyCommand, '-n', '--name'),
+                                             GetComputerNameString()));
+
+  Value := '';
+  RegQueryStringValue(HKLM, 'SOFTWARE\Leapdesk', 'ServerAddress', Value);
+  InstallServer := FirstNonEmpty(ServerParam, Value,
+                                 FirstNonEmpty(CommandServer(PreviousCommand), CommandServer(PreviousLegacyCommand), ''));
+
+  Value := '';
+  RegQueryStringValue(HKLM, 'SOFTWARE\Leapdesk', 'LogLevel', Value);
+  InstallLogLevel := ChooseLogLevel(ExpandConstant('{param:LOGLEVEL|}'), Value);
+
+  if InstallRole = '' then
+    exit;
+  Problem := SettingsProblem(InstallRole, InstallName, InstallServer);
+  if Problem = '' then
     exit;
 
-  if not IsValidScreenName(ScreenName()) then
+  // what the command line asks for has to be right; what an earlier version left
+  // behind can be set up again in the window
+  if (RoleParam <> '') or (NameParam <> '') or (ServerParam <> '') then
   begin
-    SuppressibleMsgBox('The screen name may use letters, digits, hyphens, underscores and dots.',
-                       mbError, MB_OK, IDOK);
+    Log('Refusing the command line: ' + Problem);
+    SuppressibleMsgBox(Problem, mbError, MB_OK, IDOK);
     Result := False;
-  end;
-#if Role == "Client"
-  if Result and ((ServerAddress() = '') or (Pos(' ', ServerAddress()) > 0)) then
+  end
+  else
   begin
-    SuppressibleMsgBox('Enter the server''s address, for example 100.111.152.25 or 100.111.152.25:24800.',
-                       mbError, MB_OK, IDOK);
-    Result := False;
+    Log('Not keeping the previous settings: ' + Problem);
+    InstallRole := '';
   end;
-#endif
-  if not Result and WizardSilent() then
-    Abort();
 end;
 
 function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoTypeInfo,
@@ -424,16 +423,21 @@ function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoType
 begin
   Result := 'Before installing:' + NewLine +
     Space + 'Stop and remove the Leapdesk and Input Leap services' + NewLine +
-    Space + 'Close running Leapdesk and Input Leap programs, including the settings window' + NewLine +
+    Space + 'Close running Leapdesk and Input Leap programs, including the Leapdesk KVM window' + NewLine +
     Space + 'Remove the previous Leapdesk and Input Leap installations' + NewLine + NewLine +
-    'Then install the {#Role} into:' + NewLine + Space + ExpandConstant('{app}') + NewLine + NewLine +
-    'Run it as the Leapdesk service with:' + NewLine +
-    Space + 'Screen name: ' + ScreenName() + NewLine;
-#if Role == "Client"
-  Result := Result + Space + 'Server: ' + ServerAddress() + NewLine;
-#else
-  Result := Result + Space + 'Configuration: ' + ConfigPath() + NewLine;
-#endif
+    'Then install Leapdesk KVM into:' + NewLine + Space + ExpandConstant('{app}') + NewLine + NewLine;
+  if InstallRole = '' then
+    Result := Result + 'The Leapdesk KVM window opens afterwards, to set up this computer as a server or a client.' + NewLine
+  else
+  begin
+    Result := Result + 'Run it as the Leapdesk service with:' + NewLine +
+      Space + 'Role: ' + InstallRole + NewLine +
+      Space + 'Screen name: ' + InstallName + NewLine;
+    if InstallRole = 'Client' then
+      Result := Result + Space + 'Server: ' + InstallServer + NewLine
+    else
+      Result := Result + Space + 'Configuration: ' + ConfigPath() + NewLine;
+  end;
   Result := Result + Space + 'Certificates and logs: ' + ProfileDir() + NewLine;
 end;
 
@@ -535,13 +539,11 @@ begin
       CopyTree(Legacy + '\Fingerprints', Target + '\Fingerprints');
     AddNote('Moved the pairing certificate over from Input Leap.');
   end
-  else
-    AddNote('No pairing certificate was found, so the {#Role} cannot connect yet. Run ' +
-            'new-pairing.ps1 on the server, then run this installer again with the SSL folder ' +
-            'it makes next to it.');
+  else if InstallRole <> '' then
+    AddNote('This computer has no certificate yet, so it can''t connect. The Leapdesk KVM window ' +
+            'makes one when it opens.');
 end;
 
-#if Role == "Server"
 function ConfigHasScreen(const Path, Name: String): Boolean;
 var
   Lines: TArrayOfString;
@@ -562,6 +564,10 @@ procedure InstallConfig();
 var
   Target, Previous: String;
 begin
+  // a client has no use for one
+  if InstallRole = 'Client' then
+    exit;
+
   Target := ConfigPath();
   Previous := FirstNonEmpty(OptionValue(PreviousCommand, '-c', '--config'),
                             OptionValue(PreviousLegacyCommand, '-c', '--config'), '');
@@ -586,17 +592,21 @@ begin
     CopyFile(ExpandConstant('{tmp}\seed.sgc'), Target, False);
     AddNote('Installed the configuration built into this installer as ' + Target + '.');
   #else
-    SaveStringToFile(Target, '# Leapdesk KVM server configuration.' + #13#10 + #13#10 +
-                     'section: screens' + #13#10 + #9 + ScreenName() + ':' + #13#10 + 'end' + #13#10,
-                     False);
-    AddNote('Created a configuration holding only this computer, ' + Target +
-            '. Add the clients with the Leapdesk KVM settings.');
+    // with no role yet, the window makes it if this computer becomes a server
+    if InstallRole = 'Server' then
+    begin
+      SaveStringToFile(Target, '# Leapdesk KVM server configuration.' + #13#10 + #13#10 +
+                       'section: screens' + #13#10 + #9 + InstallName + ':' + #13#10 + 'end' + #13#10,
+                       False);
+      AddNote('Created a configuration holding only this computer, ' + Target +
+              '. Add the clients in the Leapdesk KVM window.');
+    end;
   #endif
   end;
 
-  if not ConfigHasScreen(Target, ScreenName()) then
-    AddNote('The configuration has no screen named ' + ScreenName() + ', so the server will not ' +
-            'start until it has. Fix it with the Leapdesk KVM settings.');
+  if (InstallRole = 'Server') and not ConfigHasScreen(Target, InstallName) then
+    AddNote('The configuration has no screen named ' + InstallName + ', so the server will not ' +
+            'start until it has. Fix it in the Leapdesk KVM window.');
 end;
 
 procedure ConfigureFirewall();
@@ -634,23 +644,6 @@ begin
             IntToStr(Code) + '). Clients may not be able to connect.');
 end;
 
-// Opens the settings window on the installed configuration, without its first-run wizard.
-procedure ConfigureSettingsWindow();
-var
-  Key: String;
-begin
-  Key := 'Software\Leapdesk\Leapdesk';
-  RegWriteStringValue(HKCU, Key, 'configFile', ConfigPath());
-  RegWriteStringValue(HKCU, Key, 'screenName', ScreenName());
-  RegWriteStringValue(HKCU, Key, 'groupServerChecked', 'true');
-  RegWriteStringValue(HKCU, Key, 'groupClientChecked', 'false');
-  if not RegValueExists(HKCU, Key, 'wizardLastRun') then
-    RegWriteDWordValue(HKCU, Key, 'wizardLastRun', 9);
-  if not RegValueExists(HKCU, Key, 'autoConfigPrompted') then
-    RegWriteStringValue(HKCU, Key, 'autoConfigPrompted', 'true');
-end;
-#endif
-
 procedure InstallService();
 var
   Key, BinPath: String;
@@ -658,12 +651,14 @@ begin
   // the service builds the command it runs as SYSTEM in the signed-in session from these,
   // with the programs installed next to it; only administrators can change them
   Key := 'SOFTWARE\Leapdesk';
-  RegWriteStringValue(HKLM, Key, 'Role', '{#Role}');
-  RegWriteStringValue(HKLM, Key, 'ScreenName', ScreenName());
-#if Role == "Client"
-  RegWriteStringValue(HKLM, Key, 'ServerAddress', ServerAddress());
-#endif
-  RegWriteStringValue(HKLM, Key, 'LogLevel', LogLevel());
+  if InstallRole <> '' then
+  begin
+    RegWriteStringValue(HKLM, Key, 'Role', InstallRole);
+    RegWriteStringValue(HKLM, Key, 'ScreenName', InstallName);
+    if InstallRole = 'Client' then
+      RegWriteStringValue(HKLM, Key, 'ServerAddress', InstallServer);
+  end;
+  RegWriteStringValue(HKLM, Key, 'LogLevel', InstallLogLevel);
   RegWriteStringValue(HKLM, Key, 'ProfileDir', ProfileDir());
   RegWriteStringValue(HKLM, Key, 'Elevate', '1');
 
@@ -672,7 +667,7 @@ begin
     Sc('create {#ServiceName} ' + BinPath + ' DisplayName= "Leapdesk KVM"')
   else
     Sc('config {#ServiceName} ' + BinPath + ' DisplayName= "Leapdesk KVM"');
-  Sc('description {#ServiceName} "Runs the Leapdesk KVM {#Role} in the signed-in session."');
+  Sc('description {#ServiceName} "Runs the Leapdesk KVM server or client in the signed-in session."');
   // come back after a crash: 5 seconds, then 10, then a minute; start counting again after a day
   Sc('failure {#ServiceName} reset= 86400 actions= restart/5000/restart/10000/restart/60000');
   Sc('failureflag {#ServiceName} 1');
@@ -696,11 +691,8 @@ begin
     exit;
   ForceDirectories(ProfileDir());
   InstallCertificates();
-#if Role == "Server"
   InstallConfig();
   ConfigureFirewall();
-  ConfigureSettingsWindow();
-#endif
   InstallService();
 end;
 
