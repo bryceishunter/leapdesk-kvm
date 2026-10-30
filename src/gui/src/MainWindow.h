@@ -19,7 +19,9 @@
 #pragma once
 
 #include "inputleap/AppRole.h"
+#include "inputleap/ServiceSettings.h"
 #include "AppConnectionState.h"
+#include "TailscalePeers.h"
 
 #include <QMainWindow>
 #include <QSystemTrayIcon>
@@ -118,6 +120,9 @@ public slots:
         void on_m_pGroupServer_toggled(bool on);
         bool on_m_pButtonBrowseConfigFile_clicked();
         void on_m_pButtonConfigureServer_clicked();
+        void on_m_pButtonApply_clicked();
+        void on_m_pButtonUndo_clicked();
+        void on_m_pButtonTailscale_clicked();
         bool on_m_pActionSave_triggered();
         void on_m_pActionAbout_triggered();
         void on_m_pActionSettings_triggered();
@@ -140,6 +145,20 @@ public slots:
         // starts or stops the Leapdesk service, asking for administrator approval if needed;
         // a start waits up to tries half-seconds for a stop that is still going on
         void controlService(bool start, int tries = 60);
+        // whether this window manages the Leapdesk service rather than a process of its own
+        bool serviceMode() const { return m_AppConfig->processMode() == Service; }
+        // hides what only applies to one way of running, and labels the rest for it
+        void adaptToProcessMode();
+        // shows what HKLM\SOFTWARE\Leapdesk holds, dropping any changes not applied
+        void loadServiceSettings();
+        // the service settings as this window now has them
+        inputleap::ServiceSettings draftServiceSettings() const;
+        // offers Apply when the window differs from the service settings
+        void updateApplyBar();
+        // runs `tailscale status`, then updates the network path and shows the devices if asked
+        void refreshTailscale(bool showDevices);
+        void showTailscaleDevices();
+        void updateServerPath();
         bool saveServerConfig();
         void saveSettings();
         void set_icon(AppConnectionState state);
@@ -200,6 +219,10 @@ public slots:
         LogWindow *m_pLogWindow;
 
         bool m_fingerprint_expanded = false;
+        inputleap::ServiceSettings m_ServiceSettings;
+        QList<TailscalePeer> m_TailscalePeers;
+        QProcess* m_TailscaleProcess = nullptr;
+        bool m_ShowTailscaleDevices = false;
 
 private slots:
     void on_m_pCheckBoxAutoConfig_toggled(bool checked);

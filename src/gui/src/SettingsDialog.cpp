@@ -64,6 +64,19 @@ SettingsDialog::SettingsDialog(QWidget* parent, AppConfig& config) :
     ui_->m_pComboElevate->hide();
 #endif
 
+    if (app_config_.processMode() == Service) {
+        // the main window has the service's screen name; it always runs elevated with
+        // encryption on, on the standard port, and logs to its own file
+        ui_->m_pLabel_19->hide();
+        ui_->m_pLineEditScreenName->hide();
+        ui_->m_pLabelElevate->hide();
+        ui_->m_pComboElevate->hide();
+        ui_->m_pGroupNetworking->hide();
+        ui_->m_pCheckBoxLogToFile->hide();
+        ui_->m_pLineEditLogFilename->hide();
+        ui_->m_pButtonBrowseLog->hide();
+    }
+
 #if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
     connect(ui_->m_pCheckBoxLogToFile, &QCheckBox::checkStateChanged, this,
             [this](Qt::CheckState state) { logToFileChanged(state == Qt::Checked); });

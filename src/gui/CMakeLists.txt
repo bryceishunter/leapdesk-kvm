@@ -13,12 +13,14 @@ set(GUI_COMMON_SOURCE_FILES
     src/Action.cpp
     src/Hotkey.cpp
     src/KeySequence.cpp
+    src/TailscalePeers.cpp
 )
 
 set(GUI_COMMON_HEADER_FILES
     src/Action.h
     src/Hotkey.h
     src/KeySequence.h
+    src/TailscalePeers.h
 )
 
 set(GUI_SOURCE_FILES
@@ -276,6 +278,7 @@ if(INPUTLEAP_BUILD_TESTS)
         test/HotkeyTests.cpp
         test/HotkeyParsingTests.cpp
         test/ServerConfigTests.cpp
+        test/TailscalePeersTests.cpp
         test/main.cpp
     )
 

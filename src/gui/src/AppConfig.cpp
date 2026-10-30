@@ -22,6 +22,8 @@
 #include <QtCore>
 #include <QtNetwork>
 
+#include <iterator>
+
 #if defined(Q_OS_WIN)
 const char AppConfig::server_name_[] = "leapdesk-server.exe";
 const char AppConfig::client_name_[] = "leapdesk-client.exe";
@@ -199,6 +201,14 @@ void AppConfig::setPort(int i) { m_Port = i; }
 void AppConfig::setNetworkInterface(const QString &s) { m_Interface = s; }
 
 void AppConfig::setLogLevel(int i) { m_LogLevel = i; }
+
+void AppConfig::setLogLevelName(const QString& name)
+{
+    for (int i = 0; i < static_cast<int>(std::size(logLevelNames)); i++) {
+        if (name == logLevelNames[i])
+            m_LogLevel = i;
+    }
+}
 
 void AppConfig::setLogToFile(bool b) { m_LogToFile = b; }
 

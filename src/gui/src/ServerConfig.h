@@ -102,6 +102,10 @@ class ServerConfig : public BaseConfig
         const QString& serverName() const { return m_ServerName; }
         void setServerName(const QString& name) { m_ServerName = name; }
 
+        // Makes sure the configuration has a screen for the server's name: the screen
+        // called previousName takes it, with its links, or else a new one is added.
+        void ensureServerScreen(const QString& previousName);
+
     protected:
         QSettings& settings() { return *m_pSettings; }
         std::vector<Screen>& screens() { return m_Screens; }

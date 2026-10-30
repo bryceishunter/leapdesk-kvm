@@ -17,6 +17,41 @@
      <enum>QLayout::SetFixedSize</enum>
     </property>
     <item>
+     <widget class="QWidget" name="m_pWidgetScreenName" native="true">
+      <layout class="QHBoxLayout" name="horizontalLayout_screenName">
+       <property name="leftMargin">
+        <number>0</number>
+       </property>
+       <property name="topMargin">
+        <number>0</number>
+       </property>
+       <property name="rightMargin">
+        <number>0</number>
+       </property>
+       <property name="bottomMargin">
+        <number>0</number>
+       </property>
+       <item>
+        <widget class="QLabel" name="m_pLabelThisScreenName">
+         <property name="text">
+          <string>Screen &amp;name:</string>
+         </property>
+         <property name="buddy">
+          <cstring>m_pLineEditScreenName</cstring>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLineEdit" name="m_pLineEditScreenName">
+         <property name="toolTip">
+          <string>Other computers know this one by its name. Letters, digits, hyphens, underscores and dots.</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+    <item>
      <widget class="QGroupBox" name="m_pGroupServer">
       <property name="sizePolicy">
        <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
@@ -156,7 +191,18 @@
         </widget>
        </item>
        <item row="2" column="1">
-        <widget class="QLineEdit" name="m_pLineEditHostname"/>
+        <layout class="QHBoxLayout" name="horizontalLayout_hostname">
+         <item>
+          <widget class="QLineEdit" name="m_pLineEditHostname"/>
+         </item>
+         <item>
+          <widget class="QPushButton" name="m_pButtonTailscale">
+           <property name="text">
+            <string>Choose from &amp;Tailscale...</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
        </item>
        <item row="3" column="0">
         <widget class="QCheckBox" name="m_pCheckBoxAutoConfig">
@@ -178,6 +224,62 @@
            <width>120</width>
            <height>0</height>
           </size>
+         </property>
+        </widget>
+       </item>
+       <item row="4" column="0">
+        <widget class="QLabel" name="m_pLabelServerPathTitle">
+         <property name="text">
+          <string>Network path:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="4" column="1">
+        <widget class="QLabel" name="m_pLabelServerPath">
+         <property name="text">
+          <string notr="true"/>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+    <item>
+     <widget class="QFrame" name="m_pFrameApply">
+      <property name="frameShape">
+       <enum>QFrame::StyledPanel</enum>
+      </property>
+      <layout class="QHBoxLayout" name="horizontalLayout_apply">
+       <item>
+        <widget class="QLabel" name="m_pLabelApply">
+         <property name="text">
+          <string notr="true"/>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+         <property name="minimumSize">
+          <size>
+           <width>300</width>
+           <height>0</height>
+          </size>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="m_pButtonUndo">
+         <property name="text">
+          <string>&amp;Undo</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="m_pButtonApply">
+         <property name="text">
+          <string>&amp;Apply</string>
          </property>
         </widget>
        </item>

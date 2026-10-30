@@ -313,6 +313,44 @@ TEST_F(ServerConfigTests, changedOnDisk_afterHandEdit_isTrue)
     EXPECT_TRUE(config.changedOnDisk(path));
 }
 
+TEST_F(ServerConfigTests, ensureServerScreen_renamedServer_keepsItsLinks)
+{
+    TestServerConfig config = loaded(kPartialEdgeLayout);
+    config.setServerName("newdesk");
+
+    config.ensureServerScreen("desk");
+
+    inputleap::Config server = serverView(saved(config));
+    EXPECT_TRUE(server.isScreen("newdesk"));
+    EXPECT_FALSE(server.isScreen("desk"));
+    EXPECT_TRUE(server.hasNeighbor("newdesk", inputleap::kBottom));
+    EXPECT_TRUE(server.hasNeighbor("studio", inputleap::kTop));
+}
+
+TEST_F(ServerConfigTests, ensureServerScreen_unknownServer_addsItWithoutTouchingTheRest)
+{
+    TestServerConfig config = loaded(kPartialEdgeLayout);
+    config.setServerName("other");
+
+    config.ensureServerScreen("");
+
+    inputleap::Config server = serverView(saved(config));
+    EXPECT_TRUE(server.isScreen("other"));
+    EXPECT_TRUE(server.isScreen("desk"));
+    EXPECT_TRUE(server.hasNeighbor("desk", inputleap::kBottom));
+}
+
+TEST_F(ServerConfigTests, ensureServerScreen_serverAlreadyThere_changesNothing)
+{
+    TestServerConfig config = loaded(kPartialEdgeLayout);
+    config.setServerName("DESK");
+
+    config.ensureServerScreen("studio");
+
+    EXPECT_EQ(config.screens().size(), 2u);
+    EXPECT_EQ(saved(config).toStdString(), std::string(kPartialEdgeLayout));
+}
+
 TEST_F(ServerConfigTests, save_newConfiguration_writesOnlyWhatWasSet)
 {
     TestServerConfig config(settings_.get(), "desk", nullptr);

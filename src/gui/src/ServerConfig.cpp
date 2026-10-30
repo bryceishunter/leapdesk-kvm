@@ -759,6 +759,27 @@ void ServerConfig::renameScreen(const QString& oldName, const QString& newName)
     }
 }
 
+void ServerConfig::ensureServerScreen(const QString& previousName)
+{
+    auto screen_called = [this](const QString& name) {
+        return std::find_if(m_Screens.begin(), m_Screens.end(), [&](const Screen& screen) {
+            return screen.name().compare(name, Qt::CaseInsensitive) == 0;
+        });
+    };
+
+    if (screen_called(m_ServerName) != m_Screens.end())
+        return;
+
+    auto previous = previousName.isEmpty() ? m_Screens.end() : screen_called(previousName);
+    if (previous != m_Screens.end()) {
+        // a copy, since the rename changes the name this refers to
+        const QString name = previous->name();
+        renameScreen(name, m_ServerName);
+    } else {
+        m_Screens.push_back(Screen(m_ServerName));
+    }
+}
+
 void ServerConfig::removeScreen(const QString& name)
 {
     m_Screens.erase(std::remove_if(m_Screens.begin(), m_Screens.end(),

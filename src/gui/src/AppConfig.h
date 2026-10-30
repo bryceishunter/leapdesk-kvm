@@ -109,6 +109,8 @@ protected:
         void setPort(int i);
         void setNetworkInterface(const QString& s);
         void setLogLevel(int i);
+        // sets the log level called name, if there is one
+        void setLogLevelName(const QString& name);
         void setLogToFile(bool b);
         void setLogFilename(const QString& s);
         void setWizardHasRun();

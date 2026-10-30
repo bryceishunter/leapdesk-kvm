@@ -156,7 +156,8 @@ int main(int argc, char* argv[])
 	MainWindow mainWindow(settings, appConfig);
 	SetupWizard setupWizard(mainWindow, true);
 
-	if (appConfig.wizardShouldRun())
+	// on Windows the main window itself sets the computer up
+	if (appConfig.processMode() == Desktop && appConfig.wizardShouldRun())
 	{
 		setupWizard.show();
 	}

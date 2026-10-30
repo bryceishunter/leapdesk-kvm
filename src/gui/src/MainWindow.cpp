@@ -48,6 +48,10 @@
 #include <QFileDialog>
 #include <QDesktopServices>
 #include <QRegularExpression>
+#include <QSignalBlocker>
+#include <QStyle>
+
+#include <algorithm>
 
 #if defined(Q_OS_MAC)
 #include <ApplicationServices/ApplicationServices.h>
@@ -195,6 +199,7 @@ MainWindow::MainWindow(QSettings& settings, AppConfig& appConfig) :
     ui_->setupUi(this);
     setWindowIcon(QIcon(APP_LARGE_ICON));
     createMenuBar();
+    adaptToProcessMode();
     loadSettings();
     initConnections();
 
@@ -293,6 +298,18 @@ void MainWindow::open()
     }
 #endif
 
+    if (serviceMode()) {
+        // Windows starts the service; opening this window shouldn't undo a Stop
+#if defined(Q_OS_WIN)
+        if (!m_ServiceSettings.role.empty() && leapdesk_service_state() == SERVICE_RUNNING) {
+            m_ExpectedRunningState = kStarted;
+            set_connection_state(AppConnectionState::CONNECTING);
+        }
+#endif
+        refreshTailscale(false);
+        return;
+    }
+
     // only start if user has previously started. this stops the gui from
     // auto hiding before the user has configured Leapdesk KVM (which of course
     // confuses first time users, who think Leapdesk KVM has crashed).
@@ -390,7 +407,303 @@ void MainWindow::loadSettings()
     ui_->m_pGroupClient->setChecked(settings().value("groupClientChecked", true).toBool());
     ui_->m_pLineEditHostname->setText(settings().value("serverHostname").toString());
 
+    if (serviceMode())
+        loadServiceSettings();
+
     loadServerConfig();
+}
+
+void MainWindow::adaptToProcessMode()
+{
+    const bool service = serviceMode();
+
+    // the service's settings are shown and applied here, and it reads one configuration file
+    ui_->m_pWidgetScreenName->setVisible(service);
+    ui_->m_pFrameApply->hide();
+    ui_->m_pLabelServerPathTitle->hide();
+    ui_->m_pLabelServerPath->hide();
+    ui_->m_pLabelConfigurationFile->setVisible(!service);
+    ui_->m_pLineEditConfigFile->setVisible(!service);
+    ui_->m_pButtonBrowseConfigFile->setVisible(!service);
+    ui_->label_5->setVisible(!service);
+    ui_->m_pLabelScreenName->setVisible(!service);
+    ui_->m_pButtonReload->setVisible(!service);
+    ui_->m_pActionReload->setVisible(!service);
+
+    bool has_tailscale = false;
+#if defined(Q_OS_WIN)
+    has_tailscale = QFile::exists(qEnvironmentVariable("ProgramFiles") + "/Tailscale/tailscale.exe");
+#endif
+    ui_->m_pButtonTailscale->setVisible(service && has_tailscale);
+
+    if (service) {
+        ui_->m_pLabelServerName->setText(tr("Server &address:"));
+        ui_->m_pButtonApply->setIcon(style()->standardIcon(QStyle::SP_VistaShield));
+        // the service always encrypts
+        appConfig().setCryptoEnabled(true);
+
+        connect(ui_->m_pLineEditScreenName, &QLineEdit::textEdited, this, &MainWindow::updateApplyBar,
+                Qt::UniqueConnection);
+        connect(ui_->m_pLineEditHostname, &QLineEdit::textEdited, this, &MainWindow::updateApplyBar,
+                Qt::UniqueConnection);
+        connect(ui_->m_pLineEditHostname, &QLineEdit::textEdited, this, &MainWindow::updateServerPath,
+                Qt::UniqueConnection);
+    }
+}
+
+void MainWindow::loadServiceSettings()
+{
+#if defined(Q_OS_WIN)
+    QSettings service(QStringLiteral("HKEY_LOCAL_MACHINE\\SOFTWARE\\Leapdesk"), QSettings::NativeFormat);
+    m_ServiceSettings = inputleap::ServiceSettings::read([&](const std::string& name) {
+        return service.value(QString::fromStdString(name)).toString().toStdString();
+    });
+#endif
+    auto& applied = m_ServiceSettings;
+    if (applied.screen_name.empty())
+        applied.screen_name = QHostInfo::localHostName().toStdString();
+    if (applied.profile_dir.empty())
+        applied.profile_dir = QDir::toNativeSeparators(QString::fromStdString(
+            inputleap::DataDirectories::profile().u8string())).toStdString();
+
+    // neither is checked until a role is chosen
+    {
+        QSignalBlocker block_server(ui_->m_pGroupServer);
+        QSignalBlocker block_client(ui_->m_pGroupClient);
+        ui_->m_pGroupServer->setChecked(applied.role == "Server");
+        ui_->m_pGroupClient->setChecked(applied.role == "Client");
+    }
+
+    ui_->m_pLineEditScreenName->setText(QString::fromStdString(applied.screen_name));
+    ui_->m_pLineEditHostname->setText(applied.server_address.empty()
+        ? settings().value("serverHostname").toString()
+        : QString::fromStdString(applied.server_address));
+    ui_->m_pLineEditConfigFile->setText(QDir::fromNativeSeparators(
+        QString::fromStdString(applied.profile_dir)) + "/" + APP_CONFIG_NAME);
+    m_ServerConfig.setServerName(QString::fromStdString(applied.screen_name));
+    appConfig().setLogLevelName(QString::fromStdString(applied.log_level));
+
+    ui_->m_pButtonToggleStart->setEnabled(!applied.role.empty());
+    ui_->m_pFrameApply->setEnabled(true);
+    if (applied.role.empty())
+        setStatus(tr("Choose Server or Client, then press Apply."));
+
+    updateApplyBar();
+    updateServerPath();
+}
+
+inputleap::ServiceSettings MainWindow::draftServiceSettings() const
+{
+    inputleap::ServiceSettings draft = m_ServiceSettings;
+    draft.role = ui_->m_pGroupServer->isChecked() ? "Server"
+               : ui_->m_pGroupClient->isChecked() ? "Client" : "";
+    draft.screen_name = ui_->m_pLineEditScreenName->text().trimmed().toStdString();
+    draft.server_address = ui_->m_pLineEditHostname->text().trimmed().toStdString();
+    draft.log_level = m_AppConfig->logLevelText().toStdString();
+    return draft;
+}
+
+void MainWindow::updateApplyBar()
+{
+    if (!serviceMode())
+        return;
+
+    const auto draft = draftServiceSettings();
+    const auto& applied = m_ServiceSettings;
+    const bool renamed = draft.screen_name != applied.screen_name;
+    const bool changed = draft.role != applied.role || renamed || draft.log_level != applied.log_level ||
+                         (!draft.is_server() && draft.server_address != applied.server_address);
+
+    if (draft.role.empty() || !changed) {
+        ui_->m_pFrameApply->hide();
+        return;
+    }
+
+    const std::string problem = draft.problem();
+    QString text;
+    if (!problem.empty()) {
+        text = tr("Can't apply this yet: %1.").arg(QString::fromStdString(problem));
+    } else {
+        text = tr("Applying restarts the Leapdesk service. Windows asks for administrator approval.");
+        if (renamed && !draft.is_server())
+            text += " " + tr("The server's layout has to use the new name too.");
+    }
+    ui_->m_pLabelApply->setText(text);
+    ui_->m_pButtonApply->setEnabled(problem.empty());
+    ui_->m_pFrameApply->show();
+}
+
+void MainWindow::on_m_pButtonUndo_clicked()
+{
+    loadServiceSettings();
+    loadServerConfig();
+}
+
+void MainWindow::on_m_pButtonApply_clicked()
+{
+#if defined(Q_OS_WIN)
+    const auto draft = draftServiceSettings();
+    if (!draft.problem().empty())
+        return;
+
+    if (draft.is_server()) {
+        // the server won't start without a configuration holding its own screen
+        loadServerConfig();
+        if (!m_ServerConfigError.isEmpty()) {
+            QMessageBox::warning(this, tr("Configuration file has an error"),
+                                 tr("%1 could not be read: %2\n\nFix it in a text editor first.")
+                                     .arg(ui_->m_pLineEditConfigFile->text(), m_ServerConfigError));
+            return;
+        }
+        m_ServerConfig.setServerName(QString::fromStdString(draft.screen_name));
+        m_ServerConfig.ensureServerScreen(QString::fromStdString(m_ServiceSettings.screen_name));
+        if (!saveServerConfig())
+            return;
+    }
+
+    const std::wstring program = QDir::toNativeSeparators(appPath("leapdesk-daemon.exe")).toStdWString();
+    const std::wstring parameters = QString::fromStdString(
+        "/configure " + draft.configure_arguments()).toStdWString();
+
+    SHELLEXECUTEINFOW info = {};
+    info.cbSize = sizeof(info);
+    info.fMask = SEE_MASK_NOCLOSEPROCESS;
+    info.hwnd = reinterpret_cast<HWND>(winId());
+    info.lpVerb = L"runas";
+    info.lpFile = program.c_str();
+    info.lpParameters = parameters.c_str();
+    info.nShow = SW_HIDE;
+    if (!ShellExecuteExW(&info)) {
+        DWORD error = GetLastError();
+        ui_->m_pLabelApply->setText(error == ERROR_CANCELLED
+            ? tr("Nothing changed, since administrator approval was declined.")
+            : tr("Couldn't run the Leapdesk service program: %1").arg(qt_error_string(static_cast<int>(error))));
+        return;
+    }
+
+    // it may wait some seconds for the running server or client to stop
+    ui_->m_pFrameApply->setEnabled(false);
+    ui_->m_pLabelApply->setText(tr("Restarting the Leapdesk service..."));
+
+    auto* timer = new QTimer(this);
+    HANDLE process = info.hProcess;
+    connect(timer, &QTimer::timeout, this, [this, timer, process]() {
+        if (WaitForSingleObject(process, 0) == WAIT_TIMEOUT)
+            return;
+        timer->stop();
+        timer->deleteLater();
+
+        DWORD exit_code = 1;
+        GetExitCodeProcess(process, &exit_code);
+        CloseHandle(process);
+
+        if (exit_code != 0) {
+            // it has told the user why
+            appendLogError(QString("the service settings weren't applied, exit code %1").arg(exit_code));
+            ui_->m_pFrameApply->setEnabled(true);
+            updateApplyBar();
+            return;
+        }
+
+        loadServiceSettings();
+        m_pLogWindow->startNewInstance();
+        m_ExpectedRunningState = kStarted;
+        set_connection_state(AppConnectionState::CONNECTING);
+        refreshTailscale(false);
+    });
+    timer->start(250);
+#endif
+}
+
+void MainWindow::on_m_pButtonTailscale_clicked()
+{
+    refreshTailscale(true);
+}
+
+void MainWindow::refreshTailscale(bool showDevices)
+{
+#if defined(Q_OS_WIN)
+    m_ShowTailscaleDevices = m_ShowTailscaleDevices || showDevices;
+    if (m_TailscaleProcess != nullptr)
+        return;
+
+    const QString program = qEnvironmentVariable("ProgramFiles") + "/Tailscale/tailscale.exe";
+    if (!QFile::exists(program))
+        return;
+
+    m_TailscaleProcess = new QProcess(this);
+    auto finished = [this]() {
+        if (m_TailscaleProcess == nullptr)
+            return;
+        m_TailscalePeers = parse_tailscale_status(m_TailscaleProcess->readAllStandardOutput());
+        m_TailscaleProcess->deleteLater();
+        m_TailscaleProcess = nullptr;
+
+        updateServerPath();
+        if (m_ShowTailscaleDevices) {
+            m_ShowTailscaleDevices = false;
+            showTailscaleDevices();
+        }
+    };
+    connect(m_TailscaleProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this, finished);
+    connect(m_TailscaleProcess, &QProcess::errorOccurred, this, [finished](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart)
+            finished();
+    });
+    m_TailscaleProcess->start(program, {"status", "--json"});
+#else
+    (void) showDevices;
+#endif
+}
+
+void MainWindow::showTailscaleDevices()
+{
+    if (m_TailscalePeers.isEmpty()) {
+        QMessageBox::information(this, tr("Tailscale"),
+                                 tr("Tailscale listed no devices. Check that it's running and signed in."));
+        return;
+    }
+
+    QMenu menu(this);
+    for (const TailscalePeer& peer : m_TailscalePeers) {
+        QString state = peer.path == TailscalePeer::Path::Offline ? tr("offline") : tr("online");
+        QAction* action = menu.addAction(QString("%1  %2  (%3)").arg(peer.name, peer.address, state));
+        action->setData(peer.address);
+    }
+
+    QAction* chosen = menu.exec(ui_->m_pButtonTailscale->mapToGlobal(ui_->m_pButtonTailscale->rect().bottomLeft()));
+    if (chosen != nullptr) {
+        ui_->m_pLineEditHostname->setText(chosen->data().toString());
+        updateApplyBar();
+        updateServerPath();
+    }
+}
+
+void MainWindow::updateServerPath()
+{
+    const TailscalePeer* peer = nullptr;
+    if (serviceMode() && ui_->m_pGroupClient->isChecked())
+        peer = find_tailscale_peer(m_TailscalePeers, ui_->m_pLineEditHostname->text());
+
+    ui_->m_pLabelServerPathTitle->setVisible(peer != nullptr);
+    ui_->m_pLabelServerPath->setVisible(peer != nullptr);
+    if (peer == nullptr)
+        return;
+
+    switch (peer->path) {
+    case TailscalePeer::Path::Direct:
+        ui_->m_pLabelServerPath->setText(tr("Direct, through %1").arg(peer->direct_address));
+        break;
+    case TailscalePeer::Path::Relayed:
+        ui_->m_pLabelServerPath->setText(tr("Relayed through Tailscale (%1), so the pointer may lag").arg(peer->relay));
+        break;
+    case TailscalePeer::Path::Idle:
+        ui_->m_pLabelServerPath->setText(tr("Online on Tailscale, nothing being sent yet"));
+        break;
+    case TailscalePeer::Path::Offline:
+        ui_->m_pLabelServerPath->setText(tr("Offline on Tailscale"));
+        break;
+    }
 }
 
 void MainWindow::loadServerConfig()
@@ -550,6 +863,9 @@ void MainWindow::updateFromLogLine(const QString &line)
 void MainWindow::checkConnected(const QString& line)
 {
     // TODO: implement ipc connection state messages to replace this hack.
+    if (serviceMode() && m_ServiceSettings.role.empty())
+        return;
+
     if (line.contains("started server") ||
         line.contains("connected to server") ||
         line.contains("server status: active"))
@@ -657,6 +973,9 @@ void MainWindow::proofreadInfo()
 
 void MainWindow::start_cmd_app()
 {
+    if (serviceMode() && m_ServiceSettings.role.empty())
+        return;
+
     appendLogDebug("starting process");
     m_ExpectedRunningState = kStarted;
     set_connection_state(AppConnectionState::CONNECTING);
@@ -843,6 +1162,9 @@ QString MainWindow::configFilename()
 
 AppRole MainWindow::app_role() const
 {
+    // what the service runs, whatever is chosen but not applied in this window
+    if (serviceMode() && !m_ServiceSettings.role.empty())
+        return m_ServiceSettings.is_server() ? AppRole::Server : AppRole::Client;
     return ui_->m_pGroupClient->isChecked() ? AppRole::Client : AppRole::Server;
 }
 
@@ -1053,6 +1375,13 @@ QString MainWindow::getIPAddresses()
 
     bool hinted = false;
     QString result;
+
+    // a Tailscale address is the most useful one, since it works from anywhere on the tailnet
+    auto is_tailscale = [](const QHostAddress& address) {
+        return address.isInSubnet(QHostAddress(QStringLiteral("100.64.0.0")), 10);
+    };
+    const bool has_tailscale = std::any_of(addresses.begin(), addresses.end(), is_tailscale);
+
     for (int i = 0; i < addresses.size(); i++) {
         if (addresses[i].protocol() == QAbstractSocket::IPv4Protocol &&
             addresses[i] != QHostAddress(QHostAddress::LocalHost)) {
@@ -1062,7 +1391,7 @@ QString MainWindow::getIPAddresses()
 
             // usually 192.168.x.x is a useful ip for the user, so indicate
             // this by making it bold.
-            if (!hinted && address.startsWith("192.168")) {
+            if (!hinted && (has_tailscale ? is_tailscale(addresses[i]) : address.startsWith("192.168"))) {
                 hinted = true;
                 format = "<b>%1</b>, ";
             }
@@ -1083,6 +1412,10 @@ QString MainWindow::getIPAddresses()
 
 QString MainWindow::getScreenName()
 {
+    if (serviceMode()) {
+        return QString::fromStdString(m_ServiceSettings.screen_name);
+    }
+
     if (appConfig().screenName() == "") {
         return QHostInfo::localHostName();
     }
@@ -1101,6 +1434,11 @@ void MainWindow::changeEvent(QEvent* event)
         {
             ui_->retranslateUi(this);
             retranslateMenuBar();
+            if (serviceMode()) {
+                ui_->m_pLabelServerName->setText(tr("Server &address:"));
+                updateApplyBar();
+                updateServerPath();
+            }
 
             proofreadInfo();
 
@@ -1217,6 +1555,8 @@ void MainWindow::on_m_pGroupClient_toggled(bool on)
     if (on) {
         updateZeroconfService();
     }
+    updateApplyBar();
+    updateServerPath();
 }
 
 void MainWindow::on_m_pGroupServer_toggled(bool on)
@@ -1225,6 +1565,8 @@ void MainWindow::on_m_pGroupServer_toggled(bool on)
     if (on) {
         updateZeroconfService();
     }
+    updateApplyBar();
+    updateServerPath();
 }
 
 bool MainWindow::on_m_pButtonBrowseConfigFile_clicked()
@@ -1284,8 +1626,10 @@ void MainWindow::on_m_pActionSettings_triggered()
 {
     auto dialog = std::make_unique<SettingsDialog>(this, appConfig());
     connect(dialog.get(), &SettingsDialog::requestLanguageChange, this, &MainWindow::requestLanguageChange);
-    if (dialog.get()->exec() == QDialog::Accepted)
+    if (dialog.get()->exec() == QDialog::Accepted) {
         updateSSLFingerprint();
+        updateApplyBar();
+    }
     disconnect(dialog.get(), &SettingsDialog::requestLanguageChange, this, &MainWindow::requestLanguageChange);
 }
 
@@ -1331,7 +1675,7 @@ void MainWindow::showConfigureServer(const QString& message)
         m_ServerConfigError.clear();
     }
 
-    ServerConfigDialog dlg(this, serverConfig(), appConfig().screenName());
+    ServerConfigDialog dlg(this, serverConfig(), getScreenName());
     dlg.message(message);
     if (dlg.exec() == QDialog::Accepted && saveServerConfig() && m_ExpectedRunningState == kStarted)
         appendLogInfo(tr("saved %1; the running server applies it within a few seconds").arg(fileName));
