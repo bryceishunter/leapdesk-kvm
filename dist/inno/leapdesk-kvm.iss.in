@@ -25,6 +25,7 @@
 #define RepoDir "@CMAKE_CURRENT_SOURCE_DIR@"
 #define ServiceName "Leapdesk"
 #define FirewallRule "Leapdesk KVM server"
+#define PairingFirewallRule "Leapdesk KVM pairing"
 
 #ifndef StagingDir
   #error Define StagingDir as the output of cmake --install
@@ -611,15 +612,19 @@ end;
 
 procedure ConfigureFirewall();
 var
-  Script, ServerExe: String;
+  Script, ServerExe, WindowExe: String;
   Code: Integer;
 begin
+  // the server takes clients on 24800, and the window takes computers that pair on 24802
   ServerExe := ExpandConstant('{app}\leapdesk-server.exe');
+  WindowExe := ExpandConstant('{app}\leapdesk.exe');
   Script := ExpandConstant('{tmp}\firewall.ps1');
   SaveStringToFile(Script,
     '$ErrorActionPreference = ''Stop''' + #13#10 +
     '$program = ''' + ServerExe + '''' + #13#10 +
-    'foreach ($old in ''{#FirewallRule}'', ''Input Leap (Tailscale)'', ''Leapdesk KVM Listener'') {' + #13#10 +
+    '$window = ''' + WindowExe + '''' + #13#10 +
+    'foreach ($old in ''{#FirewallRule}'', ''{#PairingFirewallRule}'', ''Input Leap (Tailscale)'', ' +
+    '''Leapdesk KVM Listener'') {' + #13#10 +
     '    Get-NetFirewallRule -DisplayName $old -ErrorAction SilentlyContinue | Remove-NetFirewallRule' + #13#10 +
     '}' + #13#10 +
     '$tailscale = Get-NetAdapter -ErrorAction SilentlyContinue |' + #13#10 +
@@ -627,21 +632,25 @@ begin
     'if ($tailscale) {' + #13#10 +
     '    New-NetFirewallRule -DisplayName ''{#FirewallRule}'' -Direction Inbound -Protocol TCP -LocalPort 24800 ' +
     '-Program $program -InterfaceAlias $tailscale.Name -Action Allow | Out-Null' + #13#10 +
+    '    New-NetFirewallRule -DisplayName ''{#PairingFirewallRule}'' -Direction Inbound -Protocol TCP -LocalPort 24802 ' +
+    '-Program $window -InterfaceAlias $tailscale.Name -Action Allow | Out-Null' + #13#10 +
     '    exit 10' + #13#10 +
     '}' + #13#10 +
     'New-NetFirewallRule -DisplayName ''{#FirewallRule}'' -Direction Inbound -Protocol TCP -LocalPort 24800 ' +
     '-Program $program -Profile Domain, Private -Action Allow | Out-Null' + #13#10 +
+    'New-NetFirewallRule -DisplayName ''{#PairingFirewallRule}'' -Direction Inbound -Protocol TCP -LocalPort 24802 ' +
+    '-Program $window -Profile Domain, Private -Action Allow | Out-Null' + #13#10 +
     'exit 11' + #13#10, False);
   Code := RunHidden(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
                     '-NoProfile -ExecutionPolicy Bypass -File "' + Script + '"');
   if Code = 10 then
-    Log('Allowed the server through the firewall on the Tailscale interface')
+    Log('Allowed the server and pairing through the firewall on the Tailscale interface')
   else if Code = 11 then
     AddNote('No Tailscale network adapter was found, so the firewall lets clients in over ' +
             'private networks instead.')
   else
-    AddNote('Could not add the firewall rule for the server (PowerShell exit code ' +
-            IntToStr(Code) + '). Clients may not be able to connect.');
+    AddNote('Could not add the firewall rules for the server and pairing (PowerShell exit code ' +
+            IntToStr(Code) + '). Clients may not be able to connect or pair.');
 end;
 
 procedure InstallService();
@@ -715,7 +724,7 @@ begin
     Sc('delete {#ServiceName}');
   RegDeleteKeyIncludingSubkeys(HKLM, 'SOFTWARE\Leapdesk');
   RunHidden(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-            '-NoProfile -Command "Get-NetFirewallRule -DisplayName ''{#FirewallRule}'' ' +
-            '-ErrorAction SilentlyContinue | Remove-NetFirewallRule"');
+            '-NoProfile -Command "Get-NetFirewallRule -DisplayName ''{#FirewallRule}'', ' +
+            '''{#PairingFirewallRule}'' -ErrorAction SilentlyContinue | Remove-NetFirewallRule"');
   // certificates, the configuration and logs in %LOCALAPPDATA%\Leapdesk are kept
 end;
