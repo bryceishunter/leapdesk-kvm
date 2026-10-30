@@ -21,6 +21,7 @@
 #include "inputleap/AppRole.h"
 #include "inputleap/ServiceSettings.h"
 #include "AppConnectionState.h"
+#include "Pairing.h"
 #include "TailscalePeers.h"
 
 #include <QMainWindow>
@@ -123,6 +124,8 @@ public slots:
         void on_m_pButtonApply_clicked();
         void on_m_pButtonUndo_clicked();
         void on_m_pButtonTailscale_clicked();
+        void on_m_pButtonPairClient_clicked();
+        void on_m_pButtonPairServer_clicked();
         bool on_m_pActionSave_triggered();
         void on_m_pActionAbout_triggered();
         void on_m_pActionSettings_triggered();
@@ -159,6 +162,10 @@ public slots:
         void refreshTailscale(bool showDevices);
         void showTailscaleDevices();
         void updateServerPath();
+        // pairs with a client as the server, or with the server as a client, and trusts it
+        void pair(pairing::Protocol::Role role);
+        // loads the configuration file again if it was edited elsewhere; false if it can't be read
+        bool reloadEditedServerConfig();
         bool saveServerConfig();
         void saveSettings();
         void set_icon(AppConnectionState state);

@@ -30,6 +30,7 @@
 #include "DataDownloader.h"
 #include "CommandProcess.h"
 #include "FingerprintAcceptDialog.h"
+#include "PairingDialog.h"
 #include "QUtility.h"
 #include "ProcessorArch.h"
 #include "SslCertificate.h"
@@ -462,9 +463,13 @@ void MainWindow::loadServiceSettings()
     auto& applied = m_ServiceSettings;
     if (applied.screen_name.empty())
         applied.screen_name = QHostInfo::localHostName().toStdString();
-    if (applied.profile_dir.empty())
+    if (applied.profile_dir.empty()) {
         applied.profile_dir = QDir::toNativeSeparators(QString::fromStdString(
             inputleap::DataDirectories::profile().u8string())).toStdString();
+    } else {
+        // certificates and the computers paired with are where the service looks for them
+        inputleap::DataDirectories::profile(inputleap::fs::u8path(applied.profile_dir));
+    }
 
     // neither is checked until a role is chosen
     {
@@ -513,6 +518,13 @@ void MainWindow::updateApplyBar()
     const bool renamed = draft.screen_name != applied.screen_name;
     const bool changed = draft.role != applied.role || renamed || draft.log_level != applied.log_level ||
                          (!draft.is_server() && draft.server_address != applied.server_address);
+
+    // pairing tells the other computer the name and address the service uses
+    const QString apply_first = changed ? tr("Apply your changes first.") : QString();
+    ui_->m_pButtonPairClient->setEnabled(!changed && applied.is_server());
+    ui_->m_pButtonPairClient->setToolTip(apply_first);
+    ui_->m_pButtonPairServer->setEnabled(!changed && applied.role == "Client");
+    ui_->m_pButtonPairServer->setToolTip(apply_first);
 
     if (draft.role.empty() || !changed) {
         ui_->m_pFrameApply->hide();
@@ -933,6 +945,16 @@ void MainWindow::checkFingerprint(const QString& line)
     inputleap::FingerprintDatabase db;
     db.read(db_path);
     if (db.is_trusted(fingerprint_sha256)) {
+        return;
+    }
+
+    if (serviceMode()) {
+        // computers pair by comparing a code instead, and the service keeps trying meanwhile
+        setStatus(is_client
+            ? tr("This computer isn't paired with the server yet. Press Pair with Server here, "
+                 "and Pair a Computer on the server.")
+            : tr("A computer that isn't paired tried to connect. To let it in, press Pair a Computer "
+                 "here, and Pair with Server on that computer."));
         return;
     }
 
@@ -1661,7 +1683,7 @@ void MainWindow::autoAddScreen(const QString name)
     }
 }
 
-void MainWindow::showConfigureServer(const QString& message)
+bool MainWindow::reloadEditedServerConfig()
 {
     // the file may have been edited by hand since; that version is the one to edit
     QString fileName = ui_->m_pLineEditConfigFile->text();
@@ -1670,10 +1692,18 @@ void MainWindow::showConfigureServer(const QString& message)
             QMessageBox::warning(this, tr("Configuration file has an error"),
                                  tr("%1 could not be read: %2\n\nFix it in a text editor, "
                                     "or choose another file.").arg(fileName, m_ServerConfigError));
-            return;
+            return false;
         }
         m_ServerConfigError.clear();
     }
+    return true;
+}
+
+void MainWindow::showConfigureServer(const QString& message)
+{
+    QString fileName = ui_->m_pLineEditConfigFile->text();
+    if (!reloadEditedServerConfig())
+        return;
 
     ServerConfigDialog dlg(this, serverConfig(), getScreenName());
     dlg.message(message);
@@ -1689,6 +1719,92 @@ void MainWindow::on_m_pButtonConfigureServer_clicked()
 void MainWindow::on_m_pButtonReload_clicked()
 {
     restart_cmd_app();
+}
+
+void MainWindow::on_m_pButtonPairClient_clicked()
+{
+    pair(pairing::Protocol::Role::Server);
+}
+
+void MainWindow::on_m_pButtonPairServer_clicked()
+{
+    pair(pairing::Protocol::Role::Client);
+}
+
+void MainWindow::pair(pairing::Protocol::Role role)
+{
+    const bool server = role == pairing::Protocol::Role::Server;
+
+    const auto certificate = inputleap::DataDirectories::ssl_certificate_path();
+    QByteArray fingerprint;
+    try {
+        const auto sha256 = inputleap::get_pem_file_cert_fingerprint(
+            certificate.u8string(), inputleap::FingerprintType::SHA256).data;
+        fingerprint = QByteArray(reinterpret_cast<const char*>(sha256.data()), static_cast<int>(sha256.size()));
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, tr("Can't pair"),
+                             tr("This computer's certificate, %1, couldn't be read: %2")
+                                 .arg(QString::fromStdString(certificate.u8string()), e.what()));
+        return;
+    }
+
+    QStringList placed;
+    if (server) {
+        if (!reloadEditedServerConfig())
+            return;
+        for (const Screen& screen : std::as_const(m_ServerConfig).screens())
+            placed << screen.name();
+    }
+
+    PairingDialog dialog(this, role, getScreenName(), fingerprint,
+                         server ? getIPAddresses() : ui_->m_pLineEditHostname->text(), placed);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+
+    const QString peer = dialog.peerName();
+    const auto db_path = server ? inputleap::DataDirectories::trusted_clients_ssl_fingerprints_path()
+                                : inputleap::DataDirectories::trusted_servers_ssl_fingerprints_path();
+    inputleap::fs::create_directories(db_path.parent_path());
+    inputleap::FingerprintDatabase db;
+    db.read(db_path);
+    const QByteArray peer_fingerprint = dialog.peerFingerprint();
+    const auto* bytes = reinterpret_cast<const std::uint8_t*>(peer_fingerprint.constData());
+    const inputleap::FingerprintData trusted{
+        inputleap::fingerprint_type_to_string(inputleap::FingerprintType::SHA256),
+        std::vector<std::uint8_t>(bytes, bytes + peer_fingerprint.size())};
+    // pairing again with a computer this one already trusts changes nothing
+    const bool new_peer = !db.is_trusted(trusted);
+    if (new_peer) {
+        db.add_trusted(trusted);
+        db.write(db_path);
+        appendLogInfo(QString("paired with %1, adding it to %2")
+                          .arg(peer, QString::fromStdString(db_path.u8string())));
+    }
+    setStatus(tr("Paired with %1.").arg(peer));
+
+    if (!server) {
+        // the client gave up on a server it didn't trust, so connect again now rather than
+        // after it backs off
+        if (new_peer && m_ExpectedRunningState == kStarted)
+            restart_cmd_app();
+        return;
+    }
+
+    // the server reads its layout again once the file changes
+    if (!reloadEditedServerConfig())
+        return;
+    m_ServerConfig.setServerName(getScreenName());
+    m_ServerConfig.ensureServerScreen(QString());
+    bool linked = true;
+    if (!m_ServerConfig.hasScreen(peer))
+        linked = m_ServerConfig.addScreenBeside(peer, dialog.side());
+    if (!saveServerConfig())
+        return;
+    if (!linked) {
+        showConfigureServer(tr("%1 was added, but the %2 edge of this screen already leads to another "
+                               "screen. Link %1 to the other screens to reach it.")
+                                .arg(peer, ScreenLink::sideLabel(dialog.side())));
+    }
 }
 
 #if defined(Q_OS_WIN)

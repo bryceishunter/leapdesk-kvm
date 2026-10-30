@@ -797,14 +797,35 @@ int ServerConfig::numScreens() const
     return static_cast<int>(m_Screens.size());
 }
 
+bool ServerConfig::hasScreen(const QString& name) const
+{
+    return std::any_of(m_Screens.begin(), m_Screens.end(), [&](const Screen& screen) {
+        return screen.name().compare(name, Qt::CaseInsensitive) == 0;
+    });
+}
+
+bool ServerConfig::addScreenBeside(const QString& name, ScreenLink::Side side)
+{
+    m_Screens.push_back(Screen(name));
+
+    ScreenLink link;
+    link.source = m_ServerName;
+    link.side = side;
+    link.target = name;
+
+    bool sideTaken = std::any_of(m_Links.begin(), m_Links.end(), [&](const ScreenLink& other) {
+        return other.source.compare(link.source, Qt::CaseInsensitive) == 0 && other.side == link.side;
+    });
+    if (sideTaken)
+        return false;
+
+    m_Links.push_back(link);
+    m_Links.push_back(link.reversed());
+    return true;
+}
+
 int ServerConfig::autoAddScreen(const QString name)
 {
-    auto hasScreen = [this](const QString& screenName) {
-        return std::any_of(m_Screens.begin(), m_Screens.end(), [&](const Screen& screen) {
-            return screen.name().compare(screenName, Qt::CaseInsensitive) == 0;
-        });
-    };
-
     if (!hasScreen(m_ServerName)) {
         if (!m_Screens.empty())
             return kAutoAddScreenManualServer;
@@ -817,29 +838,19 @@ int ServerConfig::autoAddScreen(const QString name)
     if (result == kAddClientIgnore)
         return kAutoAddScreenIgnore;
 
-    m_Screens.push_back(Screen(name));
-    if (result == kAddClientOther)
+    if (result == kAddClientOther) {
+        m_Screens.push_back(Screen(name));
         return kAutoAddScreenManualClient;
-
-    ScreenLink link;
-    link.source = m_ServerName;
-    link.target = name;
-    switch (result) {
-        case kAddClientLeft: link.side = ScreenLink::Side::Left; break;
-        case kAddClientUp: link.side = ScreenLink::Side::Up; break;
-        case kAddClientDown: link.side = ScreenLink::Side::Down; break;
-        default: link.side = ScreenLink::Side::Right; break;
     }
 
-    bool sideTaken = std::any_of(m_Links.begin(), m_Links.end(), [&](const ScreenLink& other) {
-        return other.source == link.source && other.side == link.side;
-    });
-    if (sideTaken)
-        return kAutoAddScreenManualClient;
-
-    m_Links.push_back(link);
-    m_Links.push_back(link.reversed());
-    return kAutoAddScreenOk;
+    ScreenLink::Side side = ScreenLink::Side::Right;
+    switch (result) {
+        case kAddClientLeft: side = ScreenLink::Side::Left; break;
+        case kAddClientUp: side = ScreenLink::Side::Up; break;
+        case kAddClientDown: side = ScreenLink::Side::Down; break;
+        default: break;
+    }
+    return addScreenBeside(name, side) ? kAutoAddScreenOk : kAutoAddScreenManualClient;
 }
 
 int ServerConfig::showAddClientDialog(const QString& clientName)

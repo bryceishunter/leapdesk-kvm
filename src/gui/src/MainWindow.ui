@@ -128,6 +128,13 @@
           </widget>
          </item>
          <item>
+          <widget class="QPushButton" name="m_pButtonPairClient">
+           <property name="text">
+            <string>&amp;Pair a Computer...</string>
+           </property>
+          </widget>
+         </item>
+         <item>
           <spacer>
            <property name="orientation">
             <enum>Qt::Horizontal</enum>
@@ -199,6 +206,13 @@
           <widget class="QPushButton" name="m_pButtonTailscale">
            <property name="text">
             <string>Choose from &amp;Tailscale...</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="m_pButtonPairServer">
+           <property name="text">
+            <string>&amp;Pair with Server...</string>
            </property>
           </widget>
          </item>

@@ -106,6 +106,12 @@ class ServerConfig : public BaseConfig
         // called previousName takes it, with its links, or else a new one is added.
         void ensureServerScreen(const QString& previousName);
 
+        bool hasScreen(const QString& name) const;
+        // Adds a screen called name, reached through the whole of the server screen's side
+        // edge and leading back from its opposite edge. If that edge already leads somewhere,
+        // the screen is added without links and this returns false.
+        bool addScreenBeside(const QString& name, ScreenLink::Side side);
+
     protected:
         QSettings& settings() { return *m_pSettings; }
         std::vector<Screen>& screens() { return m_Screens; }
