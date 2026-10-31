@@ -21,6 +21,8 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPalette>
+#include <QToolButton>
+#include <QVBoxLayout>
 
 #include <algorithm>
 
@@ -271,6 +273,45 @@ void Chip::paintEvent(QPaintEvent*)
     painter.drawRoundedRect(box, box.height() / 2, box.height() / 2);
     painter.setPen(neutral ? pal.color(QPalette::WindowText) : toneColor(m_Tone, pal));
     painter.drawText(rect(), Qt::AlignCenter, text());
+}
+
+CollapsibleSection::CollapsibleSection(QWidget* parent) :
+    QWidget(parent),
+    m_Toggle(new QToolButton(this)),
+    m_Body(new QWidget(this))
+{
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(8);
+    // not checkable, since the style fills a checked button with the accent colour
+    m_Toggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_Toggle->setArrowType(Qt::RightArrow);
+    m_Toggle->setAutoRaise(true);
+    QFont font = m_Toggle->font();
+    font.setPointSizeF(font.pointSizeF() * 1.25);
+    font.setWeight(QFont::DemiBold);
+    m_Toggle->setFont(font);
+    layout->addWidget(m_Toggle, 0, Qt::AlignLeft);
+    layout->addWidget(m_Body);
+    m_Body->hide();
+    connect(m_Toggle, &QToolButton::clicked, this, [this]() { setExpanded(!isExpanded()); });
+}
+
+void CollapsibleSection::setTitle(const QString& title)
+{
+    m_Toggle->setText(title);
+}
+
+void CollapsibleSection::setExpanded(bool expanded)
+{
+    m_Toggle->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
+    m_Toggle->setAccessibleDescription(expanded ? tr("Open") : tr("Closed"));
+    m_Body->setVisible(expanded);
+}
+
+bool CollapsibleSection::isExpanded() const
+{
+    return m_Toggle->arrowType() == Qt::DownArrow;
 }
 
 RoleCard::RoleCard(QWidget* parent) :

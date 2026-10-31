@@ -21,6 +21,7 @@
 
 #include "KeySequence.h"
 
+#include <QCoreApplication>
 #include <QString>
 #include <QStringList>
 #include <QList>
@@ -42,6 +43,8 @@ namespace SettingsKeys {
 
 class Action
 {
+    Q_DECLARE_TR_FUNCTIONS(Action)
+
     public:
         enum ActionType { keyDown, keyUp, keystroke,
                           switchToScreen, toggleScreen, switchInDirection,
@@ -54,6 +57,8 @@ class Action
 
     public:
         QString text() const;
+        // what it does, in words for the window, such as "Switch to desk"
+        QString description() const;
 
         // parses one action as text() writes it; returns false for anything
         // this class can't represent

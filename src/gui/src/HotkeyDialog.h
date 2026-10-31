@@ -24,17 +24,19 @@
 #include <memory>
 
 class KeySequenceWidget;
+class ServerConfig;
 namespace Ui
 {
     class HotkeyDialog;
 }
 
+// Edits a hotkey's keys and the actions it runs; hotkey changes only when it's accepted.
 class HotkeyDialog : public QDialog
 {
     Q_OBJECT
 
     public:
-        HotkeyDialog(QWidget* parent, Hotkey& hotkey);
+        HotkeyDialog(QWidget* parent, const ServerConfig& config, Hotkey& hotkey);
         ~HotkeyDialog() override;
 
     public:
@@ -45,9 +47,13 @@ class HotkeyDialog : public QDialog
 
     protected:
         const KeySequenceWidget* sequenceWidget() const;
-        Hotkey& hotkey() { return m_Hotkey; }
 
     private:
+        void editAction(int index);
+        void refreshActions(int select);
+
         std::unique_ptr<Ui::HotkeyDialog> ui_;
+        const ServerConfig& m_Config;
         Hotkey& m_Hotkey;
+        Hotkey m_Draft;
 };

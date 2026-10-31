@@ -186,6 +186,12 @@ public slots:
         void updateConnection();
         // the Screens section, until the layout can be edited in the window
         void updateLayoutSummary();
+        // loads the layout file again if something else changed it, unless there's a change of
+        // this window's still to save; returns whether it was loaded
+        bool reloadServerConfigQuietly();
+        // saves the layout file shortly, so that a run of changes is saved once
+        void saveLayoutSoon();
+        void saveLayoutNow();
         // the computers this one trusts, as they're shown
         struct PairedComputer {
             inputleap::FingerprintData fingerprint;
@@ -290,6 +296,7 @@ public slots:
         QString m_StatusNotice;
         QString m_StatusShown;
         QTimer m_ServicePoll;
+        QTimer m_SaveTimer;
         inputleap::ServiceSettings m_ServiceSettings;
         QList<TailscalePeer> m_TailscalePeers;
         QString m_TailscaleName;

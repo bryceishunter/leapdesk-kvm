@@ -506,6 +506,32 @@
          </widget>
         </item>
         <item>
+         <widget class="QFrame" name="m_pLineHotkeys">
+          <property name="frameShape">
+           <enum>QFrame::HLine</enum>
+          </property>
+          <property name="frameShadow">
+           <enum>QFrame::Sunken</enum>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="HotkeysSection" name="m_pSectionHotkeys" native="true"/>
+        </item>
+        <item>
+         <widget class="QFrame" name="m_pLineOptions">
+          <property name="frameShape">
+           <enum>QFrame::HLine</enum>
+          </property>
+          <property name="frameShadow">
+           <enum>QFrame::Sunken</enum>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="ServerOptionsSection" name="m_pSectionOptions" native="true"/>
+        </item>
+        <item>
          <widget class="QLabel" name="m_pLabelNotSetUp">
           <property name="text">
            <string>Choose Server or Client and press Apply. The screen layout and connection details appear here after that.</string>
@@ -665,6 +691,18 @@
    <class>StatusDot</class>
    <extends>QWidget</extends>
    <header>WindowParts.h</header>
+  </customwidget>
+  <customwidget>
+   <class>HotkeysSection</class>
+   <extends>QWidget</extends>
+   <header>ServerSections.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>ServerOptionsSection</class>
+   <extends>QWidget</extends>
+   <header>ServerSections.h</header>
+   <container>1</container>
   </customwidget>
   <customwidget>
    <class>RoleCard</class>

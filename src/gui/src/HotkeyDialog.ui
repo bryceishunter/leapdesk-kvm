@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>344</width>
-    <height>86</height>
+    <width>460</width>
+    <height>320</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -23,6 +23,67 @@
    </item>
    <item>
     <widget class="KeySequenceWidget" name="m_pKeySequenceWidgetHotkey"/>
+   </item>
+   <item>
+    <widget class="QLabel" name="m_pLabelActions">
+     <property name="text">
+      <string>&amp;What it does, in order:</string>
+     </property>
+     <property name="buddy">
+      <cstring>m_pListActions</cstring>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="m_pLayoutActions">
+     <item>
+      <widget class="QListWidget" name="m_pListActions"/>
+     </item>
+     <item>
+      <layout class="QVBoxLayout" name="m_pLayoutActionButtons">
+       <item>
+        <widget class="QPushButton" name="m_pButtonNewAction">
+         <property name="text">
+          <string>&amp;New...</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="m_pButtonEditAction">
+         <property name="enabled">
+          <bool>false</bool>
+         </property>
+         <property name="text">
+          <string>&amp;Edit...</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="m_pButtonRemoveAction">
+         <property name="enabled">
+          <bool>false</bool>
+         </property>
+         <property name="text">
+          <string>&amp;Remove</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="spacer_actionButtons">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>0</width>
+           <height>0</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </item>
+    </layout>
    </item>
    <item>
     <widget class="QDialogButtonBox" name="buttonBox">
@@ -50,32 +111,12 @@
    <signal>accepted()</signal>
    <receiver>HotkeyDialog</receiver>
    <slot>accept()</slot>
-   <hints>
-    <hint type="sourcelabel">
-     <x>248</x>
-     <y>254</y>
-    </hint>
-    <hint type="destinationlabel">
-     <x>157</x>
-     <y>274</y>
-    </hint>
-   </hints>
   </connection>
   <connection>
    <sender>buttonBox</sender>
    <signal>rejected()</signal>
    <receiver>HotkeyDialog</receiver>
    <slot>reject()</slot>
-   <hints>
-    <hint type="sourcelabel">
-     <x>316</x>
-     <y>260</y>
-    </hint>
-    <hint type="destinationlabel">
-     <x>286</x>
-     <y>274</y>
-    </hint>
-   </hints>
   </connection>
  </connections>
 </ui>

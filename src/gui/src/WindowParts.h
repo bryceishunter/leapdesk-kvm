@@ -22,6 +22,7 @@
 #include <QLabel>
 
 class QPalette;
+class QToolButton;
 
 // Pieces of the main window drawn in the system's own colours, with the status colours from
 // the style guide: green, amber and red, each a shade for light windows and one for dark.
@@ -102,6 +103,24 @@ protected:
 
 private:
     Tone m_Tone;
+};
+
+// A section whose heading opens and closes it, for what's needed less often.
+class CollapsibleSection : public QWidget
+{
+    Q_OBJECT
+
+public:
+    explicit CollapsibleSection(QWidget* parent = nullptr);
+    void setTitle(const QString& title);
+    void setExpanded(bool expanded);
+    bool isExpanded() const;
+    // where the section's contents go
+    QWidget* body() const { return m_Body; }
+
+private:
+    QToolButton* m_Toggle;
+    QWidget* m_Body;
 };
 
 // One of the two big choices, Server or Client: a picture, the name in its text and a line

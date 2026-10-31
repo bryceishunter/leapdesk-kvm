@@ -43,6 +43,8 @@ namespace inputleap { class Config; }
 class ServerConfig : public BaseConfig
 {
     friend class ServerConfigDialog;
+    friend class ServerOptionsSection;
+    friend class HotkeysSection;
 
     public:
         ServerConfig(QSettings* settings, QString serverName, MainWindow* mainWindow);

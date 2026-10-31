@@ -46,6 +46,40 @@ Action::Action() :
 {
 }
 
+QString Action::description() const
+{
+    const QString keys = key_sequence_.toString();
+    QString words;
+    switch (type()) {
+    case keystroke: words = tr("Press and release %1").arg(keys); break;
+    case keyDown: words = tr("Press %1").arg(keys); break;
+    case keyUp: words = tr("Release %1").arg(keys); break;
+    case switchToScreen: words = tr("Switch to %1").arg(switchScreenName()); break;
+    case toggleScreen: words = tr("Switch to the next screen"); break;
+    case switchInDirection: {
+        const char* directions[] = {QT_TRANSLATE_NOOP("Action", "Switch to the screen on the left"),
+                                    QT_TRANSLATE_NOOP("Action", "Switch to the screen on the right"),
+                                    QT_TRANSLATE_NOOP("Action", "Switch to the screen above"),
+                                    QT_TRANSLATE_NOOP("Action", "Switch to the screen below")};
+        words = tr(directions[switch_direction_ >= 0 && switch_direction_ < 4 ? switch_direction_ : 0]);
+        break;
+    }
+    case lockCursorToScreen:
+        words = lock_cursor_mode_ == lockCursonOn ? tr("Lock the pointer to its screen")
+              : lock_cursor_mode_ == lockCursorOff ? tr("Unlock the pointer from its screen")
+              : tr("Lock or unlock the pointer on its screen");
+        break;
+    default: words = text(); break;
+    }
+
+    const bool keys_somewhere = type() == keystroke || type() == keyDown || type() == keyUp;
+    if (keys_somewhere && !key_sequence_.isMouseButton() && haveScreens() && !typeScreenNames().isEmpty())
+        words = tr("%1 on %2").arg(words, typeScreenNames().join(QStringLiteral(", ")));
+    if (activeOnRelease())
+        words = tr("%1, when released").arg(words);
+    return words;
+}
+
 QString Action::text() const
 {
     /* This function is used to save to config file which is for Leapdesk KVM server to

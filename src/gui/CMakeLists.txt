@@ -54,6 +54,7 @@ set(GUI_SOURCE_FILES
     src/ScreenSettingsDialog.cpp
     src/ServerConfig.cpp
     src/ServerConfigDialog.cpp
+    src/ServerSections.cpp
     src/SettingsDialog.cpp
     src/SetupWizard.cpp
     src/SslCertificate.cpp
@@ -89,6 +90,7 @@ set(GUI_HEADER_FILES
     src/ScreenSettingsDialog.h
     src/ServerConfigDialog.h
     src/ServerConfig.h
+    src/ServerSections.h
     src/SettingsDialog.h
     src/SetupWizard.h
     src/SslCertificate.h

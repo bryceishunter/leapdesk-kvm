@@ -48,6 +48,12 @@ ServerConfigDialog::ServerConfigDialog(QWidget* parent, ServerConfig& config, co
 {
     ui_->setupUi(this);
 
+    // hotkeys and the server's options are edited in the main window; the widgets stay, so
+    // that accepting writes back what they were loaded with
+    ui_->m_pTabWidget->removeTab(ui_->m_pTabWidget->indexOf(ui_->m_pTabAdvanced));
+    ui_->m_pTabWidget->removeTab(ui_->m_pTabWidget->indexOf(ui_->m_pTabHotkeys));
+    ui_->m_pTabWidget->setTabBarAutoHide(true);
+
     ui_->m_pCheckBoxHeartbeat->setChecked(serverConfig().hasHeartbeat());
     ui_->m_pSpinBoxHeartbeat->setValue(serverConfig().heartbeat());
 
@@ -477,7 +483,7 @@ void ServerConfigDialog::on_m_pButtonRemoveLink_clicked()
 void ServerConfigDialog::on_m_pButtonNewHotkey_clicked()
 {
     Hotkey hotkey;
-    HotkeyDialog dlg(this, hotkey);
+    HotkeyDialog dlg(this, serverConfig(), hotkey);
     if (dlg.exec() == QDialog::Accepted)
     {
         serverConfig().hotkeys().push_back(hotkey);
@@ -490,7 +496,7 @@ void ServerConfigDialog::on_m_pButtonEditHotkey_clicked()
     int idx = ui_->m_pListHotkeys->currentRow();
     Q_ASSERT(idx >= 0 && idx < static_cast<int>(serverConfig().hotkeys().size()));
     Hotkey& hotkey = serverConfig().hotkeys()[idx];
-    HotkeyDialog dlg(this, hotkey);
+    HotkeyDialog dlg(this, serverConfig(), hotkey);
     if (dlg.exec() == QDialog::Accepted)
         ui_->m_pListHotkeys->currentItem()->setText(hotkey.text());
 }

@@ -32,6 +32,7 @@
 #include "FingerprintAcceptDialog.h"
 #include "PairingDialog.h"
 #include "QUtility.h"
+#include "ServerSections.h"
 #include "ProcessorArch.h"
 #include "SslCertificate.h"
 #include "base/String.h"
@@ -228,6 +229,15 @@ MainWindow::MainWindow(QSettings& settings, AppConfig& appConfig) :
     connection_layout->setContentsMargins(0, 0, 0, 0);
     connection_layout->setSpacing(10);
 
+    // the hotkeys and options are saved as they're changed, once a run of changes stops
+    ui_->m_pSectionHotkeys->setConfig(&m_ServerConfig);
+    ui_->m_pSectionOptions->setConfig(&m_ServerConfig);
+    connect(ui_->m_pSectionHotkeys, &HotkeysSection::changed, this, &MainWindow::saveLayoutSoon);
+    connect(ui_->m_pSectionOptions, &ServerOptionsSection::changed, this, &MainWindow::saveLayoutSoon);
+    m_SaveTimer.setSingleShot(true);
+    m_SaveTimer.setInterval(500);
+    connect(&m_SaveTimer, &QTimer::timeout, this, &MainWindow::saveLayoutNow);
+
     createMenuBar();
     adaptToProcessMode();
     loadSettings();
@@ -300,6 +310,9 @@ MainWindow::MainWindow(QSettings& settings, AppConfig& appConfig) :
 
 MainWindow::~MainWindow()
 {
+    if (m_SaveTimer.isActive())
+        saveLayoutNow();
+
     if (appConfig().processMode() == Desktop) {
         m_ExpectedRunningState = kStopped;
         stopDesktop();
@@ -760,17 +773,16 @@ void MainWindow::loadServerConfig()
         if (!m_ServerConfig.load(fileName, &m_ServerConfigError))
             appendLogError(tr("server configuration %1 has an error, %2")
                                .arg(fileName, m_ServerConfigError));
-        return;
-    }
-
-    // older versions kept the layout in the settings; move it into the file
-    if (m_ServerConfig.loadLegacySettings()) {
+    } else if (m_ServerConfig.loadLegacySettings()) {
+        // older versions kept the layout in the settings; move it into the file
         if (saveServerConfig())
             appendLogInfo(tr("moved the server configuration into %1").arg(fileName));
-        return;
+    } else {
+        m_ServerConfig.reset();
     }
 
-    m_ServerConfig.reset();
+    ui_->m_pSectionHotkeys->refresh();
+    ui_->m_pSectionOptions->refresh();
 }
 
 bool MainWindow::saveServerConfig()
@@ -1494,6 +1506,15 @@ void MainWindow::changeEvent(QEvent* event)
             applyMutedText(this);
             break;
         }
+        case QEvent::ActivationChange:
+        {
+            // the layout file may have been edited elsewhere meanwhile
+            if (isActiveWindow() && hasShownRole() && shownRole() == AppRole::Server && reloadServerConfigQuietly()) {
+                updateLayoutSummary();
+                updateConnection();
+            }
+            break;
+        }
         case QEvent::WindowStateChange:
         {
             windowStateChanged();
@@ -1694,6 +1715,10 @@ void MainWindow::autoAddScreen(const QString name)
 
 bool MainWindow::reloadEditedServerConfig()
 {
+    // what this window changed goes into the file first
+    if (m_SaveTimer.isActive())
+        saveLayoutNow();
+
     // the file may have been edited by hand since; that version is the one to edit
     QString fileName = ui_->m_pLineEditConfigFile->text();
     if (QFile::exists(fileName) && serverConfig().changedOnDisk(fileName)) {
@@ -1704,6 +1729,8 @@ bool MainWindow::reloadEditedServerConfig()
             return false;
         }
         m_ServerConfigError.clear();
+        ui_->m_pSectionHotkeys->refresh();
+        ui_->m_pSectionOptions->refresh();
     }
     return true;
 }
@@ -1718,6 +1745,8 @@ void MainWindow::showConfigureServer(const QString& message)
     dlg.message(message);
     if (dlg.exec() == QDialog::Accepted && saveServerConfig() && m_ExpectedRunningState == kStarted)
         appendLogInfo(tr("saved %1; the running server applies it within a few seconds").arg(fileName));
+    ui_->m_pSectionHotkeys->refresh();
+    ui_->m_pSectionOptions->refresh();
     updateLayoutSummary();
     updateConnection();
 }
@@ -2040,6 +2069,10 @@ void MainWindow::updateSections()
     ui_->m_pSectionScreens->setVisible(server);
     ui_->m_pLineConnection->setVisible(has_role);
     ui_->m_pSectionConnection->setVisible(has_role);
+    ui_->m_pLineHotkeys->setVisible(server);
+    ui_->m_pSectionHotkeys->setVisible(server);
+    ui_->m_pLineOptions->setVisible(server);
+    ui_->m_pSectionOptions->setVisible(server);
     ui_->m_pButtonPairClient->setVisible(server);
     ui_->m_pLabelNotSetUp->setVisible(!has_role);
     ui_->m_pButtonToggleStart->setVisible(has_role || !serviceMode());
@@ -2496,12 +2529,37 @@ void MainWindow::updateConnection()
     applyMutedText(ui_->m_pWidgetConnection);
 }
 
-void MainWindow::updateLayoutSummary()
+bool MainWindow::reloadServerConfigQuietly()
 {
     // the running server changes the file too, as when a client unpairs it
     const QString fileName = ui_->m_pLineEditConfigFile->text();
-    if (QFile::exists(fileName) && m_ServerConfig.changedOnDisk(fileName))
-        m_ServerConfig.load(fileName, &m_ServerConfigError);
+    if (m_SaveTimer.isActive() || !QFile::exists(fileName) || !m_ServerConfig.changedOnDisk(fileName))
+        return false;
+    if (!m_ServerConfig.load(fileName, &m_ServerConfigError))
+        return false;
+    ui_->m_pSectionHotkeys->refresh();
+    ui_->m_pSectionOptions->refresh();
+    return true;
+}
+
+void MainWindow::saveLayoutSoon()
+{
+    m_SaveTimer.start();
+}
+
+void MainWindow::saveLayoutNow()
+{
+    m_SaveTimer.stop();
+    if (!saveServerConfig())
+        return;
+    setStatus(isRunning() ? tr("Saved. The server uses the change within a few seconds.") : tr("Saved."));
+    updateLayoutSummary();
+    updateConnection();
+}
+
+void MainWindow::updateLayoutSummary()
+{
+    reloadServerConfigQuietly();
 
     const QString self = getScreenName();
     QStringList lines;

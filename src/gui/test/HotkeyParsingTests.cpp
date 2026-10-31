@@ -116,3 +116,19 @@ TEST(HotkeyParsingTests, fromText_unsupportedAction_fails)
     EXPECT_FALSE(Hotkey::fromText("connected(desk) = switchToScreen(desk)", hotkey));
     EXPECT_FALSE(Hotkey::fromText("keystroke(F12)", hotkey));
 }
+
+TEST(HotkeyParsingTests, actionsSayWhatTheyDo)
+{
+    Hotkey hotkey;
+    ASSERT_TRUE(Hotkey::fromText("keystroke(Control+Alt+Down) = switchToScreen(desk), toggleScreen, "
+                                 "switchInDirection(up), lockCursorToScreen(on), "
+                                 "keystroke(Control+c,studio); keyDown(F5)", hotkey));
+    ASSERT_EQ(hotkey.actions().size(), 6u);
+
+    EXPECT_EQ(hotkey.actions()[0].description(), "Switch to desk");
+    EXPECT_EQ(hotkey.actions()[1].description(), "Switch to the next screen");
+    EXPECT_EQ(hotkey.actions()[2].description(), "Switch to the screen above");
+    EXPECT_EQ(hotkey.actions()[3].description(), "Lock the pointer to its screen");
+    EXPECT_EQ(hotkey.actions()[4].description(), "Press and release Control+c on studio");
+    EXPECT_EQ(hotkey.actions()[5].description(), "Press F5, when released");
+}
