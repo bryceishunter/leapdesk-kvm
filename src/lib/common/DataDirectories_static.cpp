@@ -27,6 +27,7 @@ static const char kFingerprintsDirName[] = "SSL/Fingerprints";
 static const char kFingerprintsLocalFilename[] = "Local.txt";
 static const char kFingerprintsTrustedServersFilename[] = "TrustedServers.txt";
 static const char kFingerprintsTrustedClientsFilename[] = "TrustedClients.txt";
+static const char kFingerprintsPairedNamesFilename[] = "PairedNames.txt";
 
 fs::path DataDirectories::ssl_fingerprints_path()
 {
@@ -46,6 +47,11 @@ fs::path DataDirectories::trusted_servers_ssl_fingerprints_path()
 fs::path DataDirectories::trusted_clients_ssl_fingerprints_path()
 {
     return ssl_fingerprints_path() / kFingerprintsTrustedClientsFilename;
+}
+
+fs::path DataDirectories::paired_names_path()
+{
+    return ssl_fingerprints_path() / kFingerprintsPairedNamesFilename;
 }
 
 fs::path DataDirectories::ssl_certificate_path()

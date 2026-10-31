@@ -169,6 +169,11 @@ enum class EventType : std::uint32_t {
     /// This is event sent when all the clients have disconnected.
     SERVER_DISCONNECTED,
 
+    /** This event is sent when a client has told the server it unpaired this computer.
+        The event data an instance of ScreenConnectedInfo that indicates the client's screen.
+    */
+    SERVER_CLIENT_UNPAIRED,
+
     /** This event is sent to inform the server to switch screens.
         The event data an instance of SwitchToScreenInfo that indicates the target screen.
     */

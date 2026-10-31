@@ -474,6 +474,12 @@ SecureSocket::secureAccept(int socket)
     return -1;
 }
 
+FingerprintData SecureSocket::peer_fingerprint()
+{
+    std::lock_guard<std::mutex> ssl_lock{ssl_mutex_};
+    return peer_fingerprint_;
+}
+
 int
 SecureSocket::secureConnect(int socket)
 {
@@ -699,6 +705,7 @@ bool SecureSocket::verify_peer_certificate(const inputleap::fs::path& fingerprin
 
     if (db.is_trusted(fingerprint_sha256)) {
         LOG_NOTE("Fingerprint matches trusted fingerprint");
+        peer_fingerprint_ = fingerprint_sha256;
         return true;
     } else {
         LOG_NOTE("Fingerprint does not match trusted fingerprint");

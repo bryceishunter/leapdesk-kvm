@@ -262,6 +262,24 @@
      </widget>
     </item>
     <item>
+     <widget class="QWidget" name="m_pWidgetPaired" native="true">
+      <layout class="QVBoxLayout" name="m_pLayoutPaired">
+       <property name="leftMargin">
+        <number>0</number>
+       </property>
+       <property name="topMargin">
+        <number>0</number>
+       </property>
+       <property name="rightMargin">
+        <number>0</number>
+       </property>
+       <property name="bottomMargin">
+        <number>0</number>
+       </property>
+      </layout>
+     </widget>
+    </item>
+    <item>
      <widget class="QFrame" name="m_pFrameApply">
       <property name="frameShape">
        <enum>QFrame::StyledPanel</enum>

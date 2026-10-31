@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <iosfwd>
 #include <ios>
+#include <string>
 #if INPUTLEAP_USE_GULRAK_FILESYSTEM
 #include <ghc/fs_fwd.hpp>
 #else
@@ -42,5 +43,9 @@ void open_utf8_path(std::fstream& stream, const fs::path& path,
                     std::ios_base::openmode mode = std::ios_base::in | std::ios_base::out);
 
 std::FILE* fopen_utf8_path(const fs::path& path, const std::string& mode);
+
+// Replaces the file at path with contents in one step, so that nothing reading it ever sees
+// half of them. Returns whether that worked; if not, the file is as it was.
+bool replace_file(const fs::path& path, const std::string& contents);
 
 } // namespace inputleap

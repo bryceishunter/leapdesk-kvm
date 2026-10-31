@@ -30,6 +30,8 @@
 #include "inputleap/StreamChunker.h"
 #include "inputleap/IPlatformScreen.h"
 #include "mt/Thread.h"
+#include "net/FingerprintDatabase.h"
+#include "net/PairedComputers.h"
 #include "net/TCPSocket.h"
 #include "net/IDataSocket.h"
 #include "net/ISocketFactory.h"
@@ -39,6 +41,7 @@
 #include "base/EventQueueTimer.h"
 #include "base/IEventQueue.h"
 #include "base/Time.h"
+#include "common/DataDirectories.h"
 
 
 #include <climits>
@@ -667,6 +670,52 @@ void Client::send_files(const FilePasteRequest& request)
 void Client::file_paste_status(const FilePasteStatus& status)
 {
     m_screen->file_paste_status(status);
+}
+
+void Client::close_if_server_untrusted()
+{
+    // a timer means it's still saying hello, or has already told the server and is waiting
+    if (m_server == nullptr || m_timer != nullptr) {
+        return;
+    }
+    const auto fingerprint = peer_fingerprint(m_stream);
+    if (!fingerprint.valid()) {
+        return;
+    }
+    // a file that can't be read isn't a change of mind
+    FingerprintDatabase db;
+    if (!db.read(DataDirectories::trusted_servers_ssl_fingerprints_path()) ||
+        db.is_trusted(fingerprint)) {
+        return;
+    }
+
+    if (!m_ready || m_protocol_minor < 8) {
+        LOG_NOTE("this computer was unpaired from the server, disconnecting");
+        disconnect(nullptr);
+        return;
+    }
+
+    // the server closes the connection in answer, which also gets this message to it before
+    // the connection goes.  flushing could block for good on a secure socket that has failed
+    LOG_NOTE("this computer was unpaired from the server, telling the server");
+    m_server->send_unpair();
+    m_timer = m_events->newOneShotTimer(5.0, nullptr);
+    m_events->add_handler(EventType::TIMER, m_timer, [this](const auto& e){ disconnect(nullptr); });
+}
+
+void Client::unpaired_by_server()
+{
+    const auto fingerprint = peer_fingerprint(m_stream);
+    if (!fingerprint.valid()) {
+        LOG_WARN("ignoring a request to unpair over a connection without certificates");
+    } else if (forget_computer(DataDirectories::trusted_servers_ssl_fingerprints_path(),
+                               fingerprint)) {
+        LOG_NOTE("the server unpaired this computer");
+    } else {
+        LOG_ERR("the server unpaired this computer, but it still trusts the server: "
+                "the list of trusted servers couldn't be changed");
+    }
+    disconnect(nullptr);
 }
 
 void Client::handle_hello()

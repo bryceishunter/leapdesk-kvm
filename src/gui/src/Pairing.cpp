@@ -137,6 +137,15 @@ QString host_of(const QString& address)
     return text;
 }
 
+QString computer_label(const QString& name, const QString& only_server, const QByteArray& fingerprint)
+{
+    if (!name.isEmpty())
+        return name;
+    if (!only_server.isEmpty())
+        return only_server;
+    return Protocol::tr("computer %1").arg(QString::fromLatin1(fingerprint.left(4).toHex(':')));
+}
+
 Protocol::Protocol(Role role, const QString& name, const QByteArray& fingerprint, const QByteArray& nonce) :
     role_(role),
     name_(name),

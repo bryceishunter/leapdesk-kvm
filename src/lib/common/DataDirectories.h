@@ -37,6 +37,7 @@ public:
     static fs::path local_ssl_fingerprints_path();
     static fs::path trusted_servers_ssl_fingerprints_path();
     static fs::path trusted_clients_ssl_fingerprints_path();
+    static fs::path paired_names_path();
     static fs::path ssl_certificate_path();
 
     static void maybe_copy_old_profile(const fs::path& old_profile_path,

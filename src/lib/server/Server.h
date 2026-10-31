@@ -167,6 +167,20 @@ public:
     */
     void file_paste_status(BaseClientProxy* sender, const FilePasteStatus& status);
 
+    //! Stop using clients that are no longer trusted
+    /*!
+    Disconnects each client whose certificate has been taken off the list of
+    trusted clients, telling it so that it forgets this computer too.
+    */
+    void close_untrusted_clients();
+
+    //! A client stopped trusting this computer
+    /*!
+    Stops trusting the certificate \c client connected with, and disconnects
+    it.  The screen comes off the layout through SERVER_CLIENT_UNPAIRED.
+    */
+    void unpaired_by_client(BaseClientProxy* client);
+
     //! Store ClientListener pointer
     void setListener(ClientListener* p) { m_clientListener = p; }
 

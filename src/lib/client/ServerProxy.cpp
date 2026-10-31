@@ -187,6 +187,11 @@ ServerProxy::EResult ServerProxy::parseHandshakeMessage(const std::uint8_t* code
         return kDisconnect;
     }
 
+    else if (memcmp(code, kMsgCUnpair, 4) == 0) {
+        m_client->unpaired_by_server();
+        return kDisconnect;
+    }
+
     else if (memcmp(code, kMsgEIncompatible, 4) == 0) {
         std::int32_t major, minor;
         ProtocolUtil::readf(m_stream,
@@ -323,6 +328,11 @@ ServerProxy::EResult ServerProxy::parseMessage(const std::uint8_t* code)
         // server wants us to hangup
         LOG_DEBUG1("recv close");
         m_client->disconnect(nullptr);
+        return kDisconnect;
+    }
+
+    else if (memcmp(code, kMsgCUnpair, 4) == 0) {
+        m_client->unpaired_by_server();
         return kDisconnect;
     }
     else if (memcmp(code, kMsgEBad, 4) == 0) {
@@ -936,6 +946,12 @@ void ServerProxy::send_file_paste_status(const FilePasteStatus& status)
         static_cast<int>(status.state), status.detail.c_str());
     ProtocolUtil::writef(m_stream, kMsgDFileStatus, &status.request,
                          static_cast<std::uint32_t>(status.state), &status.detail);
+}
+
+void ServerProxy::send_unpair()
+{
+    LOG_DEBUG("sending unpair");
+    ProtocolUtil::writef(m_stream, kMsgCUnpair);
 }
 
 bool ServerProxy::file_send()

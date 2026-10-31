@@ -804,6 +804,20 @@ bool ServerConfig::hasScreen(const QString& name) const
     });
 }
 
+bool ServerConfig::takeOffLayout(const QString& name)
+{
+    if (name.compare(serverName(), Qt::CaseInsensitive) == 0)
+        return false;
+    for (const Screen& screen : m_Screens) {
+        if (screen.name().compare(name, Qt::CaseInsensitive) == 0) {
+            const QString exact = screen.name();
+            removeScreen(exact);
+            return true;
+        }
+    }
+    return false;
+}
+
 bool ServerConfig::addScreenBeside(const QString& name, ScreenLink::Side side)
 {
     m_Screens.push_back(Screen(name));

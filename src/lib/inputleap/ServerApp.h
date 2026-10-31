@@ -23,6 +23,7 @@
 #include "inputleap/Fwd.h"
 #include "base/Fwd.h"
 #include "server/Config.h"
+#include "io/FileChangeWatch.h"
 #include "net/NetworkAddress.h"
 #include "arch/Arch.h"
 #include "arch/IArchMultithread.h"
@@ -118,13 +119,17 @@ private:
     // Reloads the configuration once its file changes and then stays the same
     // for a moment, so edits from the settings window or by hand apply
     // without a restart; a file that fails to parse leaves the old one in use.
-    void start_watching_config_file();
-    void stop_watching_config_file();
-    void check_config_file();
+    // Disconnects clients taken off the list of trusted clients the same way.
+    void start_watching_files();
+    void stop_watching_files();
+    void check_watched_files();
 
-    EventQueueTimer* config_watch_timer_ = nullptr;
-    std::string config_file_stamp_;
-    bool config_file_changing_ = false;
+    // takes a client that unpaired this computer off the layout in the configuration file
+    void handle_client_unpaired(const Event& event);
+
+    EventQueueTimer* file_watch_timer_ = nullptr;
+    std::unique_ptr<FileChangeWatch> config_watch_;
+    std::unique_ptr<FileChangeWatch> trust_watch_;
 };
 
 // configuration file name

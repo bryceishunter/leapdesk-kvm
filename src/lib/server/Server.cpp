@@ -20,6 +20,7 @@
 
 #include "server/ClientProxy.h"
 #include "server/ClientProxyUnknown.h"
+#include "server/IClientConnection.h"
 #include "server/PrimaryClient.h"
 #include "server/ClientListener.h"
 #include "inputleap/FileChunk.h"
@@ -34,6 +35,8 @@
 #include "inputleap/KeyState.h"
 #include "inputleap/Screen.h"
 #include "inputleap/PacketStreamFilter.h"
+#include "net/FingerprintDatabase.h"
+#include "net/PairedComputers.h"
 #include "net/TCPSocket.h"
 #include "net/IDataSocket.h"
 #include "net/IListenSocket.h"
@@ -44,6 +47,7 @@
 #include "base/IEventQueue.h"
 #include "base/Log.h"
 #include "base/Time.h"
+#include "common/DataDirectories.h"
 
 #include <climits>
 #include <cstring>
@@ -303,6 +307,12 @@ Server::adoptClient(BaseClientProxy* client)
 	}
 	LOG_NOTE("client \"%s\" has connected%s", getName(client).c_str(),
 	         client->supports_file_paste() ? "" : ", with a version that can't paste files");
+
+	// computers paired before names were kept, or renamed since, get their name here
+	const auto fingerprint = peer_fingerprint(client->get_conn().get_stream());
+	if (fingerprint.valid()) {
+		remember_computer_name(fingerprint, getName(client));
+	}
 
 	// send configuration options to client
 	sendOptions(client);
@@ -2134,6 +2144,61 @@ Server::closeClients(const Config& config)
     for (auto index = removed.begin(); index != removed.end(); ++index) {
 		closeClient(*index, kMsgCClose);
 	}
+}
+
+void Server::close_untrusted_clients()
+{
+	// a file that can't be read isn't a change of mind
+	FingerprintDatabase db;
+	if (!db.read(DataDirectories::trusted_clients_ssl_fingerprints_path())) {
+		return;
+	}
+
+	// collected first because closeClient() modifies the collection we iterate over
+	std::vector<BaseClientProxy*> untrusted;
+	for (const auto& entry : m_clients) {
+		if (entry.second == m_primaryClient) {
+			continue;
+		}
+		const auto fingerprint = peer_fingerprint(entry.second->get_conn().get_stream());
+		if (fingerprint.valid() && !db.is_trusted(fingerprint)) {
+			untrusted.push_back(entry.second);
+		}
+	}
+
+	for (BaseClientProxy* client : untrusted) {
+		LOG_NOTE("client \"%s\" was unpaired", getName(client).c_str());
+		closeClient(client, client->supports_unpair() ? kMsgCUnpair : kMsgCClose);
+	}
+}
+
+void Server::unpaired_by_client(BaseClientProxy* client)
+{
+	const auto fingerprint = peer_fingerprint(client->get_conn().get_stream());
+	if (!fingerprint.valid()) {
+		LOG_WARN("ignoring a request to unpair from \"%s\" over a connection without certificates",
+		         client->getName().c_str());
+		return;
+	}
+
+	if (forget_computer(DataDirectories::trusted_clients_ssl_fingerprints_path(), fingerprint)) {
+		LOG_NOTE("client \"%s\" unpaired this computer", client->getName().c_str());
+	} else {
+		LOG_ERR("client \"%s\" unpaired this computer, but it's still trusted: "
+		        "the list of trusted clients couldn't be changed", client->getName().c_str());
+	}
+
+	// it's already being closed if this computer unpaired it at the same moment.  one that asks
+	// before it's even been adopted is closed once it is, since the list of trusted clients changed
+	const std::string name = getName(client);
+	const auto active = m_clients.find(name);
+	if (active == m_clients.end() || active->second != client) {
+		return;
+	}
+	closeClient(client, kMsgCClose);
+	m_events->add_event(EventType::SERVER_CLIENT_UNPAIRED, this,
+	                    create_event_data<Server::ScreenConnectedInfo>(
+	                        Server::ScreenConnectedInfo{name}));
 }
 
 void

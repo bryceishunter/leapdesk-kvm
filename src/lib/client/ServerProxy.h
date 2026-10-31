@@ -64,6 +64,9 @@ public:
     void request_file_paste(const FilePasteRequest& request);
     void send_file_paste_status(const FilePasteStatus& status);
 
+    // unpairing, protocol 1.8
+    void send_unpair();
+
 #ifdef INPUTLEAP_TEST_ENV
     void handleDataForTest() { handleData(Event(), nullptr); }
 #endif

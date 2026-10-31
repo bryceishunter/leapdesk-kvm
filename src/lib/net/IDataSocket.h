@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include "net/FingerprintData.h"
 #include "net/ISocket.h"
 #include "io/IStream.h"
 #include "base/EventTypes.h"
@@ -51,6 +52,17 @@ public:
     output until the stream connects.
     */
     virtual void connect(const NetworkAddress&) = 0;
+
+    //@}
+    //! @name accessors
+    //@{
+
+    //! Get the fingerprint of the peer's certificate
+    /*!
+    Returns the fingerprint that was checked against the trusted ones when this
+    socket connected.  Invalid if the socket doesn't check certificates.
+    */
+    virtual FingerprintData peer_fingerprint() { return {}; }
 
     //@}
 

@@ -188,6 +188,8 @@ void ServerApp::reload_config()
     LOG_DEBUG("reload configuration");
     if (loadConfig(args().m_configFile)) {
         if (server_) {
+            // first, or a client just unpaired and taken off the layout would only hear goodbye
+            server_->close_untrusted_clients();
             server_->setConfig(*args().m_config);
         }
         LOG_NOTE("reloaded configuration");
@@ -256,62 +258,63 @@ ServerApp::loadConfig()
     }
 }
 
-namespace {
-
-// size and modification time, enough to tell that a file was written
-std::string config_file_stamp(const std::string& pathname)
+void ServerApp::start_watching_files()
 {
-    std::error_code error;
-    inputleap::fs::path path = inputleap::fs::u8path(pathname);
-    auto size = inputleap::fs::file_size(path, error);
-    if (error) {
-        return "missing";
+    if (!args().m_configFile.empty()) {
+        config_watch_ = std::make_unique<FileChangeWatch>(fs::u8path(args().m_configFile));
     }
-    auto time = inputleap::fs::last_write_time(path, error);
-    if (error) {
-        return "missing";
-    }
-    return std::to_string(size) + ":" + std::to_string(time.time_since_epoch().count());
+    trust_watch_ = std::make_unique<FileChangeWatch>(
+        DataDirectories::trusted_clients_ssl_fingerprints_path());
+    file_watch_timer_ = m_events->newTimer(1.0, nullptr);
+    m_events->add_handler(EventType::TIMER, file_watch_timer_,
+                          [this](const auto&) { check_watched_files(); });
 }
 
-} // namespace
+void ServerApp::stop_watching_files()
+{
+    m_events->remove_handler(EventType::TIMER, file_watch_timer_);
+    m_events->deleteTimer(file_watch_timer_);
+    file_watch_timer_ = nullptr;
+    config_watch_.reset();
+    trust_watch_.reset();
+}
 
-void ServerApp::start_watching_config_file()
+void ServerApp::check_watched_files()
+{
+    if (trust_watch_->changed() && server_) {
+        server_->close_untrusted_clients();
+    }
+    if (config_watch_ && config_watch_->changed()) {
+        LOG_NOTE("configuration file changed");
+        reload_config();
+    }
+}
+
+void ServerApp::handle_client_unpaired(const Event& event)
 {
     if (args().m_configFile.empty()) {
         return;
     }
-    config_file_stamp_ = config_file_stamp(args().m_configFile);
-    config_file_changing_ = false;
-    config_watch_timer_ = m_events->newTimer(1.0, nullptr);
-    m_events->add_handler(EventType::TIMER, config_watch_timer_,
-                          [this](const auto&) { check_config_file(); });
-}
+    const auto& info = event.get_data_as<Server::ScreenConnectedInfo>();
 
-void ServerApp::stop_watching_config_file()
-{
-    if (config_watch_timer_ == nullptr) {
+    // the file may have been edited since it was last read, and that version is the one to edit
+    if (!loadConfig(args().m_configFile)) {
+        LOG_WARN("couldn't take \"%s\" off the layout: the configuration file can't be read",
+                 info.m_screen.c_str());
         return;
     }
-    m_events->remove_handler(EventType::TIMER, config_watch_timer_);
-    m_events->deleteTimer(config_watch_timer_);
-    config_watch_timer_ = nullptr;
-}
-
-void ServerApp::check_config_file()
-{
-    std::string stamp = config_file_stamp(args().m_configFile);
-    if (stamp != config_file_stamp_) {
-        // wait for the next check, so that a file still being written is not read
-        config_file_stamp_ = stamp;
-        config_file_changing_ = true;
+    if (!args().m_config->isScreen(info.m_screen)) {
         return;
     }
-    if (config_file_changing_ && stamp != "missing") {
-        config_file_changing_ = false;
-        LOG_NOTE("configuration file changed");
-        reload_config();
+    args().m_config->removeScreen(info.m_screen);
+
+    std::ostringstream text;
+    text << *args().m_config;
+    if (!replace_file(fs::u8path(args().m_configFile), text.str())) {
+        LOG_WARN("couldn't take \"%s\" off the layout: the configuration file can't be written",
+                 info.m_screen.c_str());
     }
+    // the check on the file applies this to the running server
 }
 
 bool ServerApp::loadConfig(const std::string& pathname)
@@ -739,6 +742,8 @@ std::unique_ptr<Server> ServerApp::open_server(Config& config, PrimaryClient* pr
                           [this](const auto& e){ handle_no_clients(); });
     m_events->add_handler(EventType::SERVER_SCREEN_SWITCHED, server.get(),
                           [this](const auto& e){ handle_screen_switched(e); });
+    m_events->add_handler(EventType::SERVER_CLIENT_UNPAIRED, server.get(),
+                          [this](const auto& e){ handle_client_unpaired(e); });
 
     return server;
 }
@@ -818,7 +823,7 @@ ServerApp::mainLoop()
     ARCH->setSignalHandler(Arch::kHANGUP, &reloadSignalHandler, nullptr);
     m_events->add_handler(EventType::SERVER_APP_RELOAD_CONFIG, m_events->getSystemTarget(),
                           [this](const auto& e){ reload_config(); });
-    start_watching_config_file();
+    start_watching_files();
 
     // handle force reconnect event by disconnecting clients.  they'll
     // reconnect automatically.
@@ -855,7 +860,7 @@ ServerApp::mainLoop()
     LOG_DEBUG1("stopping server");
     m_events->remove_handler(EventType::SERVER_APP_FORCE_RECONNECT, m_events->getSystemTarget());
     m_events->remove_handler(EventType::SERVER_APP_RELOAD_CONFIG, m_events->getSystemTarget());
-    stop_watching_config_file();
+    stop_watching_files();
     cleanupServer();
     updateStatus();
     LOG_NOTE("stopped server");

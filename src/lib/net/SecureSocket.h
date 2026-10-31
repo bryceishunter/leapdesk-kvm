@@ -45,6 +45,7 @@ public:
 
     // IDataSocket overrides
     virtual void connect(const NetworkAddress&) override;
+    FingerprintData peer_fingerprint() override;
 
     std::unique_ptr<ISocketMultiplexerJob> newJob() override;
     bool isFatal() const override { return m_fatal; }
@@ -93,6 +94,7 @@ private:
     std::mutex ssl_mutex_;
 
     std::unique_ptr<Ssl> m_ssl;
+    FingerprintData peer_fingerprint_; // set once it's found to be trusted
     bool m_secureReady;
     bool m_fatal;
     ConnectionSecurityLevel security_level_ = ConnectionSecurityLevel::ENCRYPTED;

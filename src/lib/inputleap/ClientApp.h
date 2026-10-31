@@ -22,6 +22,7 @@
 #include "base/Fwd.h"
 #include "net/Fwd.h"
 #include "inputleap/App.h"
+#include "io/FileChangeWatch.h"
 #include "ClientArgs.h"
 
 namespace inputleap {
@@ -79,9 +80,15 @@ public:
 private:
     std::unique_ptr<IPlatformScreen> create_platform_screen();
 
+    // Disconnects once the server being used is taken off the list of trusted servers.
+    void start_watching_trusted_servers();
+    void stop_watching_trusted_servers();
+
     Client* m_client;
     std::unique_ptr<inputleap::Screen> m_clientScreen;
     NetworkAddress* m_serverAddress;
+    EventQueueTimer* trust_watch_timer_ = nullptr;
+    std::unique_ptr<FileChangeWatch> trust_watch_;
 };
 
 } // namespace inputleap

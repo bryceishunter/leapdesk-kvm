@@ -24,7 +24,10 @@
 #if SYSAPI_WIN32
 #include "common/win32/encoding_utilities.h"
 #endif
+#include <chrono>
 #include <fstream>
+#include <system_error>
+#include <thread>
 
 namespace inputleap {
 
@@ -68,6 +71,35 @@ std::FILE* fopen_utf8_path(const fs::path& path, const std::string& mode)
 #else
     return std::fopen(path.native().c_str(), mode.c_str());
 #endif
+}
+
+bool replace_file(const fs::path& path, const std::string& contents)
+{
+    fs::path temporary = path;
+    temporary += ".new";
+
+    std::error_code error;
+    {
+        std::ofstream file;
+        open_utf8_path(file, temporary, std::ios_base::out);
+        file << contents;
+        file.close();
+        if (file.fail()) {
+            fs::remove(temporary, error);
+            return false;
+        }
+    }
+
+    // on Windows a file can't be replaced while it's open, but it's only open for a moment
+    for (int tries = 0; tries < 20; ++tries) {
+        fs::rename(temporary, path, error);
+        if (!error) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    fs::remove(temporary, error);
+    return false;
 }
 
 } // namespace inputleap

@@ -294,6 +294,14 @@ TEST(PairingTests, hostOfAServerAddress)
     EXPECT_EQ(pairing::spaced("482913"), "482 913");
 }
 
+TEST(PairingTests, aPairedComputerIsCalledByTheBestThingKnown)
+{
+    const QByteArray fingerprint = QByteArray::fromHex("f3695b67d31c");
+    EXPECT_EQ(pairing::computer_label("surfacestudio", "100.111.152.25", fingerprint), "surfacestudio");
+    EXPECT_EQ(pairing::computer_label("", "100.111.152.25", fingerprint), "100.111.152.25");
+    EXPECT_EQ(pairing::computer_label("", "", fingerprint), "computer f3:69:5b:67");
+}
+
 namespace {
 
 class PairingConnectionTests : public ::testing::Test

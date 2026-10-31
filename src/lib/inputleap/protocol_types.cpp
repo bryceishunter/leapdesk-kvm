@@ -32,6 +32,7 @@ const char*                kMsgCResetOptions    = "CROP";
 const char*                kMsgCInfoAck        = "CIAK";
 const char*                kMsgCKeepAlive        = "CALV";
 const char*                kMsgCFileSend        = "CFSN%s%s%s";
+const char*                kMsgCUnpair            = "CUNP";
 const char*                kMsgDKeyDown        = "DKDN%2i%2i%2i";
 const char*                kMsgDKeyDown1_0        = "DKDN%2i%2i";
 const char*                kMsgDKeyRepeat        = "DKRP%2i%2i%2i%2i";

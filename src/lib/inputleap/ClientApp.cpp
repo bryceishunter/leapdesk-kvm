@@ -39,6 +39,7 @@
 #include "base/log_outputters.h"
 #include "base/EventQueue.h"
 #include "base/Log.h"
+#include "common/DataDirectories.h"
 #include "common/Version.h"
 
 #if WINAPI_MSWINDOWS
@@ -337,6 +338,27 @@ Client* ClientApp::openClient(const std::string& name, const NetworkAddress& add
 }
 
 
+void ClientApp::start_watching_trusted_servers()
+{
+    trust_watch_ = std::make_unique<FileChangeWatch>(
+        DataDirectories::trusted_servers_ssl_fingerprints_path());
+    trust_watch_timer_ = m_events->newTimer(1.0, nullptr);
+    m_events->add_handler(EventType::TIMER, trust_watch_timer_, [this](const auto&)
+    {
+        if (trust_watch_->changed() && m_client != nullptr) {
+            m_client->close_if_server_untrusted();
+        }
+    });
+}
+
+void ClientApp::stop_watching_trusted_servers()
+{
+    m_events->remove_handler(EventType::TIMER, trust_watch_timer_);
+    m_events->deleteTimer(trust_watch_timer_);
+    trust_watch_timer_ = nullptr;
+    trust_watch_.reset();
+}
+
 void
 ClientApp::closeClient(Client* client)
 {
@@ -430,6 +452,8 @@ ClientApp::mainLoop()
         initIpcClient();
     }
 
+    start_watching_trusted_servers();
+
     // run event loop.  if startClient() failed we're supposed to retry
     // later.  the timer installed by startClient() will take care of
     // that.
@@ -453,6 +477,7 @@ ClientApp::mainLoop()
 
     // close down
     LOG_DEBUG1("stopping client");
+    stop_watching_trusted_servers();
     stopClient();
     updateStatus();
     LOG_NOTE("stopped client");

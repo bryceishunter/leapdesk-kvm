@@ -82,6 +82,13 @@ public:
     */
     virtual bool supports_file_paste() const { return false; }
 
+    //! Test for unpairing support
+    /*!
+    Return true if this screen forgets the server when told it was unpaired,
+    i.e. it speaks protocol 1.8.
+    */
+    virtual bool supports_unpair() const { return false; }
+
     //@}
 
     // IClient overrides

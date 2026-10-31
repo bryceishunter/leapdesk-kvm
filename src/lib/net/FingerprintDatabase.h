@@ -27,14 +27,17 @@ namespace inputleap {
 
 class FingerprintDatabase {
 public:
-    void read(const fs::path& path);
-    void write(const fs::path& path);
+    // whether the file could be opened; one that can't reads as no fingerprints
+    bool read(const fs::path& path);
+    // replaces the file in one step, and returns whether that worked
+    bool write(const fs::path& path);
 
     void read_stream(std::istream& stream);
     void write_stream(std::ostream& stream);
 
     void clear();
     void add_trusted(const FingerprintData& fingerprint);
+    void remove_trusted(const FingerprintData& fingerprint);
     bool is_trusted(const FingerprintData& fingerprint);
 
     const std::vector<FingerprintData>& fingerprints() const { return fingerprints_; }

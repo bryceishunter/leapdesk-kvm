@@ -20,21 +20,26 @@
 #include "io/filesystem.h"
 #include <algorithm>
 #include <fstream>
+#include <sstream>
 
 namespace inputleap {
 
-void FingerprintDatabase::read(const fs::path& path)
+bool FingerprintDatabase::read(const fs::path& path)
 {
     std::ifstream file;
     open_utf8_path(file, path, std::ios_base::in);
+    if (!file.is_open()) {
+        return false;
+    }
     read_stream(file);
+    return true;
 }
 
-void FingerprintDatabase::write(const fs::path& path)
+bool FingerprintDatabase::write(const fs::path& path)
 {
-    std::ofstream file;
-    open_utf8_path(file, path, std::ios_base::out);
-    write_stream(file);
+    std::ostringstream text;
+    write_stream(text);
+    return replace_file(path, text.str());
 }
 
 void FingerprintDatabase::read_stream(std::istream& stream)
@@ -80,6 +85,12 @@ void FingerprintDatabase::add_trusted(const FingerprintData& fingerprint)
         return;
     }
     fingerprints_.push_back(fingerprint);
+}
+
+void FingerprintDatabase::remove_trusted(const FingerprintData& fingerprint)
+{
+    fingerprints_.erase(std::remove(fingerprints_.begin(), fingerprints_.end(), fingerprint),
+                        fingerprints_.end());
 }
 
 bool FingerprintDatabase::is_trusted(const FingerprintData& fingerprint)

@@ -377,6 +377,28 @@ TEST_F(ServerConfigTests, addScreenBeside_edgeInUse_addsTheScreenWithoutLinks)
     EXPECT_TRUE(config.hasScreen("LAPTOP"));
 }
 
+TEST_F(ServerConfigTests, takeOffLayout_removesTheScreenAndItsLinksInAnyCase)
+{
+    TestServerConfig config = loaded(kPartialEdgeLayout);
+
+    EXPECT_TRUE(config.takeOffLayout("STUDIO"));
+
+    inputleap::Config server = serverView(saved(config));
+    EXPECT_FALSE(server.isScreen("studio"));
+    EXPECT_TRUE(server.isScreen("desk"));
+    EXPECT_FALSE(server.hasNeighbor("desk", inputleap::kBottom));
+}
+
+TEST_F(ServerConfigTests, takeOffLayout_leavesTheServerAndUnknownScreens)
+{
+    TestServerConfig config = loaded(kPartialEdgeLayout);
+
+    EXPECT_FALSE(config.takeOffLayout("DESK"));
+    EXPECT_FALSE(config.takeOffLayout("laptop"));
+
+    EXPECT_EQ(saved(config).toStdString(), std::string(kPartialEdgeLayout));
+}
+
 TEST_F(ServerConfigTests, save_newConfiguration_writesOnlyWhatWasSet)
 {
     TestServerConfig config(settings_.get(), "desk", nullptr);

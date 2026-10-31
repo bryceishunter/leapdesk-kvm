@@ -111,6 +111,9 @@ class ServerConfig : public BaseConfig
         // edge and leading back from its opposite edge. If that edge already leads somewhere,
         // the screen is added without links and this returns false.
         bool addScreenBeside(const QString& name, ScreenLink::Side side);
+        // Takes the screen called name, in any case, and its links off the layout. Returns false
+        // if there is no such screen. The server's own screen stays.
+        bool takeOffLayout(const QString& name);
 
     protected:
         QSettings& settings() { return *m_pSettings; }

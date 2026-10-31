@@ -102,6 +102,19 @@ public:
     */
     void file_paste_status(const FilePasteStatus& status);
 
+    //! Stop using a server that is no longer trusted
+    /*!
+    If this computer was unpaired from the server it's connected to, tells the
+    server so that it forgets this computer too, and disconnects.
+    */
+    void close_if_server_untrusted();
+
+    //! Notify that the server stopped trusting this computer
+    /*!
+    Stops trusting the certificate the server connected with, and disconnects.
+    */
+    void unpaired_by_server();
+
 
     //@}
     //! @name accessors

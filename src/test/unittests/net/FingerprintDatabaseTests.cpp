@@ -66,6 +66,18 @@ v2:algo2:03040506ab
 )");
 }
 
+TEST(FingerprintDatabase, remove_trusted)
+{
+    FingerprintDatabase db;
+    db.add_trusted({ "algo1", { 1, 2, 3, 4, 0xab } });
+    db.add_trusted({ "algo2", { 3, 4, 5, 6, 0xab } });
+
+    db.remove_trusted({ "algo1", { 1, 2, 3, 4, 0xab } });
+    db.remove_trusted({ "algo1", { 9, 9 } });
+
+    ASSERT_EQ(db.fingerprints(), (std::vector<FingerprintData>{{ "algo2", { 3, 4, 5, 6, 0xab } }}));
+}
+
 TEST(FingerprintDatabase, clear)
 {
     FingerprintDatabase db;

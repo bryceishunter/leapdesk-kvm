@@ -20,11 +20,14 @@
 
 #include "inputleap/AppRole.h"
 #include "inputleap/ServiceSettings.h"
+#include "net/FingerprintData.h"
 #include "AppConnectionState.h"
 #include "Pairing.h"
 #include "TailscalePeers.h"
 
+#include <QFileSystemWatcher>
 #include <QMainWindow>
+#include <QMap>
 #include <QSystemTrayIcon>
 #include <QSettings>
 #include <QProcess>
@@ -164,6 +167,11 @@ public slots:
         void updateServerPath();
         // pairs with a client as the server, or with the server as a client, and trusts it
         void pair(pairing::Protocol::Role role);
+        // shows the computers this one is paired with, each with a button to unpair it
+        void updatePairedComputers();
+        // asks, then stops trusting the computer with this fingerprint; its running server or
+        // client notices, and tells that computer if it's connected
+        void unpair(const inputleap::FingerprintData& fingerprint, const QString& name, const QString& label);
         // loads the configuration file again if it was edited elsewhere; false if it can't be read
         bool reloadEditedServerConfig();
         bool saveServerConfig();
@@ -230,6 +238,11 @@ public slots:
         QList<TailscalePeer> m_TailscalePeers;
         QProcess* m_TailscaleProcess = nullptr;
         bool m_ShowTailscaleDevices = false;
+        QFileSystemWatcher m_PairedWatcher;
+        // what each paired computer shown is called, by the line for it in the list of trusted
+        // computers, so that one gone from the list can be named
+        QMap<QString, QString> m_PairedLabels;
+        bool m_PairedAsServer = false;
 
 private slots:
     void on_m_pCheckBoxAutoConfig_toggled(bool checked);

@@ -37,6 +37,7 @@
 #include "base/String.h"
 #include "common/DataDirectories.h"
 #include "net/FingerprintDatabase.h"
+#include "net/PairedComputers.h"
 #include "net/SecureUtils.h"
 
 #include <QtCore>
@@ -47,6 +48,9 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QFileDialog>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QPushButton>
 #include <QDesktopServices>
 #include <QRegularExpression>
 #include <QSignalBlocker>
@@ -240,6 +244,10 @@ MainWindow::MainWindow(QSettings& settings, AppConfig& appConfig) :
     ui_->frame_fingerprint_details->hide();
 
     updateSSLFingerprint();
+
+    // the running server or client changes the list when the other computer unpairs this one
+    connect(&m_PairedWatcher, &QFileSystemWatcher::directoryChanged, this, &MainWindow::updatePairedComputers);
+    updatePairedComputers();
 
     connect(ui_->toolbutton_show_fingerprint, &QToolButton::clicked, this, [this](bool checked)
     {
@@ -495,6 +503,7 @@ void MainWindow::loadServiceSettings()
 
     updateApplyBar();
     updateServerPath();
+    updatePairedComputers();
 }
 
 inputleap::ServiceSettings MainWindow::draftServiceSettings() const
@@ -652,6 +661,7 @@ void MainWindow::refreshTailscale(bool showDevices)
         m_TailscaleProcess = nullptr;
 
         updateServerPath();
+        updatePairedComputers();
         if (m_ShowTailscaleDevices) {
             m_ShowTailscaleDevices = false;
             showTailscaleDevices();
@@ -1579,6 +1589,7 @@ void MainWindow::on_m_pGroupClient_toggled(bool on)
     }
     updateApplyBar();
     updateServerPath();
+    updatePairedComputers();
 }
 
 void MainWindow::on_m_pGroupServer_toggled(bool on)
@@ -1589,6 +1600,7 @@ void MainWindow::on_m_pGroupServer_toggled(bool on)
     }
     updateApplyBar();
     updateServerPath();
+    updatePairedComputers();
 }
 
 bool MainWindow::on_m_pButtonBrowseConfigFile_clicked()
@@ -1780,7 +1792,9 @@ void MainWindow::pair(pairing::Protocol::Role role)
         appendLogInfo(QString("paired with %1, adding it to %2")
                           .arg(peer, QString::fromStdString(db_path.u8string())));
     }
+    inputleap::remember_computer_name(trusted, peer.toStdString());
     setStatus(tr("Paired with %1.").arg(peer));
+    updatePairedComputers();
 
     if (!server) {
         // the client gave up on a server it didn't trust, so connect again now rather than
@@ -1804,6 +1818,128 @@ void MainWindow::pair(pairing::Protocol::Role role)
         showConfigureServer(tr("%1 was added, but the %2 edge of this screen already leads to another "
                                "screen. Link %1 to the other screens to reach it.")
                                 .arg(peer, ScreenLink::sideLabel(dialog.side())));
+    }
+}
+
+void MainWindow::updatePairedComputers()
+{
+    const auto folder = QString::fromStdString(inputleap::DataDirectories::ssl_fingerprints_path().u8string());
+    if (!m_PairedWatcher.directories().contains(folder) && QFileInfo::exists(folder)) {
+        if (!m_PairedWatcher.directories().isEmpty())
+            m_PairedWatcher.removePaths(m_PairedWatcher.directories());
+        m_PairedWatcher.addPath(folder);
+    }
+
+    const bool server = app_role() == AppRole::Server;
+    const auto db_path = server ? inputleap::DataDirectories::trusted_clients_ssl_fingerprints_path()
+                                : inputleap::DataDirectories::trusted_servers_ssl_fingerprints_path();
+    inputleap::FingerprintDatabase db;
+    db.read(db_path);
+    inputleap::PairedNames names;
+    names.read(inputleap::DataDirectories::paired_names_path());
+
+    // only these decide who is trusted
+    std::vector<inputleap::FingerprintData> trusted;
+    if (m_AppConfig->getCryptoEnabled() && (!serviceMode() || !m_ServiceSettings.role.empty())) {
+        const char* sha256 = inputleap::fingerprint_type_to_string(inputleap::FingerprintType::SHA256);
+        for (const auto& fingerprint : db.fingerprints()) {
+            if (fingerprint.algorithm == sha256)
+                trusted.push_back(fingerprint);
+        }
+    }
+
+    // a client paired before names were kept can still say which server it uses
+    QString only_server;
+    if (!server && trusted.size() == 1) {
+        const QString address = serviceMode() ? QString::fromStdString(m_ServiceSettings.server_address) : hostname();
+        const TailscalePeer* peer = find_tailscale_peer(m_TailscalePeers, address);
+        only_server = peer != nullptr ? peer->name : pairing::host_of(address);
+    }
+
+    const auto rows = ui_->m_pWidgetPaired->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly);
+    for (QWidget* row : rows) {
+        // later, since this may be running because of a button in one of them
+        row->hide();
+        row->deleteLater();
+    }
+
+    QMap<QString, QString> labels;
+    for (const auto& fingerprint : trusted) {
+        const QString name = QString::fromStdString(names.name_of(fingerprint));
+        const QByteArray bytes(reinterpret_cast<const char*>(fingerprint.data.data()),
+                               static_cast<int>(fingerprint.data.size()));
+        const QString label = pairing::computer_label(name, only_server, bytes);
+        labels.insert(QString::fromStdString(inputleap::FingerprintDatabase::to_db_line(fingerprint)), label);
+
+        auto* row = new QWidget(ui_->m_pWidgetPaired);
+        auto* layout = new QHBoxLayout(row);
+        layout->setContentsMargins(0, 0, 0, 0);
+        auto* text = new QLabel(tr("Paired with %1.").arg(label), row);
+        text->setTextFormat(Qt::PlainText);
+        layout->addWidget(text);
+        layout->addStretch();
+        auto* button = new QPushButton(tr("Unpair %1...").arg(label), row);
+        button->setAutoDefault(false);
+        connect(button, &QPushButton::clicked, this, [this, fingerprint, name, label]() {
+            unpair(fingerprint, name, label);
+        });
+        layout->addWidget(button);
+        ui_->m_pLayoutPaired->addWidget(row);
+    }
+    ui_->m_pWidgetPaired->setVisible(!trusted.empty());
+
+    // the other computer unpaired this one, or it was taken out of the list by hand
+    if (server == m_PairedAsServer) {
+        for (auto it = m_PairedLabels.cbegin(); it != m_PairedLabels.cend(); ++it) {
+            if (!labels.contains(it.key()))
+                setStatus(tr("%1 is no longer paired with this computer.").arg(it.value()));
+        }
+    }
+    m_PairedLabels = labels;
+    m_PairedAsServer = server;
+}
+
+void MainWindow::unpair(const inputleap::FingerprintData& fingerprint, const QString& name, const QString& label)
+{
+    const bool server = app_role() == AppRole::Server;
+
+    QMessageBox box(this);
+    box.setIcon(QMessageBox::Warning);
+    box.setTextFormat(Qt::PlainText);
+    box.setWindowTitle(tr("Unpair %1").arg(label));
+    box.setText(tr("Unpair %1?").arg(label));
+    box.setInformativeText(
+        (server ? tr("%1 can't connect to this computer any more, and comes off this computer's layout. ").arg(label)
+                : tr("This computer can't connect to %1 any more. ").arg(label)) +
+        tr("To use them together again, pair them again with a new code on both.\n\n"
+           "If %1 is connected now, it forgets this computer too. If it isn't, it keeps this computer "
+           "on its list until you unpair it there as well, but the two can't connect.").arg(label));
+    auto* confirm = box.addButton(tr("&Unpair %1").arg(label), QMessageBox::DestructiveRole);
+    box.setDefaultButton(box.addButton(QMessageBox::Cancel));
+    box.exec();
+    if (box.clickedButton() != confirm)
+        return;
+
+    const auto db_path = server ? inputleap::DataDirectories::trusted_clients_ssl_fingerprints_path()
+                                : inputleap::DataDirectories::trusted_servers_ssl_fingerprints_path();
+    if (!inputleap::forget_computer(db_path, fingerprint)) {
+        QMessageBox::warning(this, tr("Can't unpair"),
+                             tr("%1 couldn't be changed, so this computer still trusts %2.")
+                                 .arg(QString::fromStdString(db_path.u8string()), label));
+        return;
+    }
+    appendLogInfo(QString("unpaired %1, taking it out of %2").arg(label, QString::fromStdString(db_path.u8string())));
+
+    // says it in its own words, not as something that happened to this computer
+    m_PairedLabels.remove(QString::fromStdString(inputleap::FingerprintDatabase::to_db_line(fingerprint)));
+    updatePairedComputers();
+    setStatus(tr("Unpaired %1.").arg(label));
+
+    // only after the list above, so that the running server tells it before it comes off the layout
+    if (server && !name.isEmpty() && reloadEditedServerConfig()) {
+        m_ServerConfig.setServerName(getScreenName());
+        if (m_ServerConfig.takeOffLayout(name))
+            saveServerConfig();
     }
 }
 

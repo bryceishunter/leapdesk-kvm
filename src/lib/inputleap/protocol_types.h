@@ -34,9 +34,10 @@ namespace inputleap {
 // 1.5:  adds file transfer and removes home brew crypto
 // 1.6:  adds clipboard streaming
 // 1.7:  adds pasting files copied on another screen (Leapdesk KVM)
+// 1.8:  adds unpairing (Leapdesk KVM)
 // NOTE: with new version, InputLeap minor version should increment
 static const std::int16_t kProtocolMajorVersion = 1;
-static const std::int16_t kProtocolMinorVersion = 7;
+static const std::int16_t kProtocolMinorVersion = 8;
 
 // the oldest version this build still speaks, to peers that don't know
 // the newer messages
@@ -193,6 +194,14 @@ extern const char*        kMsgCKeepAlive;
 // secondary sends them only if its clipboard still holds files with that
 // id, and reports progress with kMsgDFileStatus.  since 1.7.
 extern const char*        kMsgCFileSend;
+
+// unpair:  primary <-> secondary
+// the sender no longer trusts the receiver's certificate, so the receiver
+// stops trusting the certificate the sender proved it holds when this
+// connection was made, and nothing else.  ignored without a certificate.
+// from the primary it stands in for kMsgCClose.  from a secondary it's
+// answered with kMsgCClose.  since 1.8.
+extern const char*        kMsgCUnpair;
 
 //
 // data codes
