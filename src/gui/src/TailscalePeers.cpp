@@ -69,6 +69,13 @@ QList<TailscalePeer> parse_tailscale_status(const QByteArray& json)
     return peers;
 }
 
+QString parse_tailscale_self_name(const QByteArray& json)
+{
+    const QJsonObject self = QJsonDocument::fromJson(json).object().value("Self").toObject();
+    const QString dns_name = self.value("DNSName").toString();
+    return dns_name.isEmpty() ? self.value("HostName").toString() : dns_name.section('.', 0, 0);
+}
+
 const TailscalePeer* find_tailscale_peer(const QList<TailscalePeer>& peers, const QString& address)
 {
     QString host = address.trimmed();

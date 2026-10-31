@@ -40,6 +40,9 @@ struct TailscalePeer {
 // The devices in the JSON, online ones first and then by name; none if it can't be read.
 QList<TailscalePeer> parse_tailscale_status(const QByteArray& json);
 
+// This computer's own name on the tailnet, the first part of its MagicDNS name, or empty.
+QString parse_tailscale_self_name(const QByteArray& json);
+
 // The device a server address such as 100.111.152.25:24800 or desktop-gp522k1 points at,
 // or nullptr if it isn't on the tailnet.
 const TailscalePeer* find_tailscale_peer(const QList<TailscalePeer>& peers, const QString& address);

@@ -23,7 +23,7 @@ namespace {
 
 // the fields that matter, as `tailscale status --json` gives them
 const char kStatus[] = R"({
-  "Self": { "HostName": "me" },
+  "Self": { "HostName": "Me", "DNSName": "me.tailcba81.ts.net." },
   "Peer": {
     "key1": { "HostName": "phone", "DNSName": "phone.tailcba81.ts.net.",
               "TailscaleIPs": ["100.81.175.81", "fd7a:115c:a1e0::1"],
@@ -82,6 +82,12 @@ TEST(TailscalePeersTests, somethingElseGivesNoDevices)
     EXPECT_TRUE(parse_tailscale_status("").isEmpty());
     EXPECT_TRUE(parse_tailscale_status("not json").isEmpty());
     EXPECT_TRUE(parse_tailscale_status("{}").isEmpty());
+    EXPECT_TRUE(parse_tailscale_self_name("not json").isEmpty());
+}
+
+TEST(TailscalePeersTests, readsThisComputersOwnName)
+{
+    EXPECT_EQ(parse_tailscale_self_name(kStatus).toStdString(), "me");
 }
 
 TEST(TailscalePeersTests, findsADeviceByAddressOrName)

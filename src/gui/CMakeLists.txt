@@ -11,6 +11,7 @@ set (CMAKE_INCLUDE_CURRENT_DIR ON)
 # files that are used both in tests and the app
 set(GUI_COMMON_SOURCE_FILES
     src/Action.cpp
+    src/ConnectionStatus.cpp
     src/Hotkey.cpp
     src/KeySequence.cpp
     src/Pairing.cpp
@@ -19,6 +20,7 @@ set(GUI_COMMON_SOURCE_FILES
 
 set(GUI_COMMON_HEADER_FILES
     src/Action.h
+    src/ConnectionStatus.h
     src/Hotkey.h
     src/KeySequence.h
     src/Pairing.h
@@ -55,6 +57,7 @@ set(GUI_SOURCE_FILES
     src/SettingsDialog.cpp
     src/SetupWizard.cpp
     src/SslCertificate.cpp
+    src/WindowParts.cpp
 )
 
 set(GUI_HEADER_FILES
@@ -89,6 +92,7 @@ set(GUI_HEADER_FILES
     src/SettingsDialog.h
     src/SetupWizard.h
     src/SslCertificate.h
+    src/WindowParts.h
 )
 
 set(GUI_ZEROCONF_FILES
@@ -278,6 +282,7 @@ endif()
 
 if(INPUTLEAP_BUILD_TESTS)
     set(GUI_TEST_SOURCE_FILES
+        test/ConnectionStatusTests.cpp
         test/KeySequenceTests.cpp
         test/HotkeyTests.cpp
         test/HotkeyParsingTests.cpp

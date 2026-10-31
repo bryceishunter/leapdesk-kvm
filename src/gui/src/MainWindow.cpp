@@ -48,7 +48,9 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QFileDialog>
+#include <QGridLayout>
 #include <QHBoxLayout>
+#include <QVBoxLayout>
 #include <QLabel>
 #include <QPushButton>
 #include <QDesktopServices>
@@ -203,13 +205,33 @@ MainWindow::MainWindow(QSettings& settings, AppConfig& appConfig) :
 
     ui_->setupUi(this);
     setWindowIcon(QIcon(APP_LARGE_ICON));
+
+    // the sections read as one page in the window's own colour
+    ui_->m_pScrollArea->viewport()->setAutoFillBackground(false);
+    ui_->m_pScrollContents->setAutoFillBackground(false);
+    makeSectionTitle(ui_->m_pLabelThisTitle);
+    makeSectionTitle(ui_->m_pLabelScreensTitle);
+    makeSectionTitle(ui_->m_pLabelConnectionTitle);
+    QFont status_font = ui_->m_pStatusTitle->font();
+    status_font.setWeight(QFont::DemiBold);
+    ui_->m_pStatusTitle->setFont(status_font);
+    for (QLabel* help : {ui_->m_pLabelSetupHelp, ui_->m_pLabelScreenNameHelp, ui_->m_pLabelServerAddressHelp,
+                         ui_->m_pStatusLabel, ui_->m_pLabelNotSetUp}) {
+        markMuted(help);
+    }
+    ui_->m_pLineEditHostname->setFont(monospaceFont(ui_->m_pLineEditHostname->font()));
+    ui_->m_pCardServer->setKind(RoleCard::Kind::Server);
+    ui_->m_pCardServer->setDescription(tr("Its keyboard and mouse control the other computers."));
+    ui_->m_pCardClient->setKind(RoleCard::Kind::Client);
+    ui_->m_pCardClient->setDescription(tr("Controlled from another computer's keyboard and mouse."));
+    auto* connection_layout = new QVBoxLayout(ui_->m_pWidgetConnection);
+    connection_layout->setContentsMargins(0, 0, 0, 0);
+    connection_layout->setSpacing(10);
+
     createMenuBar();
     adaptToProcessMode();
     loadSettings();
     initConnections();
-
-    ui_->m_pLabelScreenName->setText(getScreenName());
-    ui_->m_pLabelIpAddresses->setText(getIPAddresses());
 
 #if defined(Q_OS_WIN)
     // ipc must always be enabled, so that we can disable command when switching to desktop mode.
@@ -239,32 +261,41 @@ MainWindow::MainWindow(QSettings& settings, AppConfig& appConfig) :
 #endif
 
     ui_->m_pComboServerList->hide();
-    ui_->m_pLabelPadlock->hide();
-    ui_->m_pLabelPadlock->setPixmap(QPixmap(":/res/icons/64x64/padlock.png").scaledToHeight(fontMetrics().height() * 1.5, Qt::SmoothTransformation));
-    ui_->frame_fingerprint_details->hide();
 
     updateSSLFingerprint();
 
     // the running server or client changes the list when the other computer unpairs this one
     connect(&m_PairedWatcher, &QFileSystemWatcher::directoryChanged, this, &MainWindow::updatePairedComputers);
-    updatePairedComputers();
+    updateSections();
 
-    connect(ui_->toolbutton_show_fingerprint, &QToolButton::clicked, this, [this](bool checked)
-    {
-        (void) checked;
+#if defined(Q_OS_WIN)
+    // the service can be started and stopped from elsewhere, such as the Services console
+    if (serviceMode()) {
+        connect(&m_ServicePoll, &QTimer::timeout, this, [this, ticks = 0]() mutable {
+            // the network path changes too, as Tailscale finds a direct way or loses it
+            if (++ticks % 15 == 0 && isVisible())
+                refreshTailscale(false);
+            if (m_ServiceSettings.role.empty())
+                return;
+            const DWORD state = leapdesk_service_state();
+            const bool running = state == SERVICE_RUNNING || state == SERVICE_START_PENDING;
+            if (!running && connection_state_ != AppConnectionState::DISCONNECTED) {
+                m_ExpectedRunningState = kStopped;
+                m_Connection.reset();
+                set_connection_state(AppConnectionState::DISCONNECTED);
+            } else if (running && connection_state_ == AppConnectionState::DISCONNECTED) {
+                m_ExpectedRunningState = kStarted;
+                set_connection_state(AppConnectionState::CONNECTING);
+            }
+        });
+        m_ServicePoll.start(2000);
+    }
+#endif
 
-        m_fingerprint_expanded = !m_fingerprint_expanded;
-        if (m_fingerprint_expanded) {
-            ui_->frame_fingerprint_details->show();
-            ui_->toolbutton_show_fingerprint->setArrowType(Qt::ArrowType::UpArrow);
-        } else {
-            ui_->frame_fingerprint_details->hide();
-            ui_->toolbutton_show_fingerprint->setArrowType(Qt::ArrowType::DownArrow);
-        }
-    });
-
-    // resize window to smallest reasonable size
-    resize(0, 0);
+    // wide enough for the role cards side by side, and as tall as fits on the screen
+    const QRect available = screen() != nullptr ? screen()->availableGeometry() : QRect(0, 0, 1280, 800);
+    setMinimumWidth((std::min)(560, available.width()));
+    resize((std::min)(720, available.width()), (std::min)(available.height() * 9 / 10, 860));
 }
 
 MainWindow::~MainWindow()
@@ -331,7 +362,8 @@ void MainWindow::open()
 
 void MainWindow::setStatus(const QString &status)
 {
-    ui_->m_pStatusLabel->setText(status);
+    m_StatusNotice = status;
+    updateStatus();
 }
 
 void MainWindow::createTrayIcon()
@@ -408,12 +440,16 @@ void MainWindow::createMenuBar()
 
 void MainWindow::loadSettings()
 {
-    // the next two must come BEFORE loading groupServerChecked and groupClientChecked or
-    // disabling and/or enabling the right widgets won't automatically work
-    ui_->m_pGroupServer->setChecked(settings().value("groupServerChecked", false).toBool());
     ui_->m_pLineEditConfigFile->setText(settings().value("configFile",
                                                     QDir::homePath() + "/" + APP_CONFIG_NAME).toString());
-    ui_->m_pGroupClient->setChecked(settings().value("groupClientChecked", true).toBool());
+    {
+        QSignalBlocker block_server(ui_->m_pCardServer);
+        QSignalBlocker block_client(ui_->m_pCardClient);
+        const bool server = settings().value("groupServerChecked", false).toBool();
+        ui_->m_pCardServer->setChecked(server);
+        ui_->m_pCardClient->setChecked(!server && settings().value("groupClientChecked", true).toBool());
+    }
+    updateZeroconfService();
     ui_->m_pLineEditHostname->setText(settings().value("serverHostname").toString());
 
     if (serviceMode())
@@ -426,16 +462,13 @@ void MainWindow::adaptToProcessMode()
 {
     const bool service = serviceMode();
 
-    // the service's settings are shown and applied here, and it reads one configuration file
-    ui_->m_pWidgetScreenName->setVisible(service);
+    // the service's settings are shown and applied here, and it reads one configuration file;
+    // otherwise the screen name is in Settings
+    ui_->m_pLabelThisScreenName->setVisible(service);
+    ui_->m_pLineEditScreenName->setVisible(service);
+    ui_->m_pLabelScreenNameHelp->setVisible(service);
     ui_->m_pFrameApply->hide();
-    ui_->m_pLabelServerPathTitle->hide();
-    ui_->m_pLabelServerPath->hide();
-    ui_->m_pLabelConfigurationFile->setVisible(!service);
-    ui_->m_pLineEditConfigFile->setVisible(!service);
-    ui_->m_pButtonBrowseConfigFile->setVisible(!service);
-    ui_->label_5->setVisible(!service);
-    ui_->m_pLabelScreenName->setVisible(!service);
+    ui_->m_pWidgetConfigFile->setVisible(!service);
     ui_->m_pButtonReload->setVisible(!service);
     ui_->m_pActionReload->setVisible(!service);
 
@@ -446,7 +479,6 @@ void MainWindow::adaptToProcessMode()
     ui_->m_pButtonTailscale->setVisible(service && has_tailscale);
 
     if (service) {
-        ui_->m_pLabelServerName->setText(tr("Server &address:"));
         ui_->m_pButtonApply->setIcon(style()->standardIcon(QStyle::SP_VistaShield));
         // the service always encrypts
         appConfig().setCryptoEnabled(true);
@@ -481,10 +513,10 @@ void MainWindow::loadServiceSettings()
 
     // neither is checked until a role is chosen
     {
-        QSignalBlocker block_server(ui_->m_pGroupServer);
-        QSignalBlocker block_client(ui_->m_pGroupClient);
-        ui_->m_pGroupServer->setChecked(applied.role == "Server");
-        ui_->m_pGroupClient->setChecked(applied.role == "Client");
+        QSignalBlocker block_server(ui_->m_pCardServer);
+        QSignalBlocker block_client(ui_->m_pCardClient);
+        ui_->m_pCardServer->setChecked(applied.role == "Server");
+        ui_->m_pCardClient->setChecked(applied.role == "Client");
     }
 
     ui_->m_pLineEditScreenName->setText(QString::fromStdString(applied.screen_name));
@@ -498,19 +530,17 @@ void MainWindow::loadServiceSettings()
 
     ui_->m_pButtonToggleStart->setEnabled(!applied.role.empty());
     ui_->m_pFrameApply->setEnabled(true);
-    if (applied.role.empty())
-        setStatus(tr("Choose Server or Client, then press Apply."));
 
     updateApplyBar();
     updateServerPath();
-    updatePairedComputers();
+    updateSections();
 }
 
 inputleap::ServiceSettings MainWindow::draftServiceSettings() const
 {
     inputleap::ServiceSettings draft = m_ServiceSettings;
-    draft.role = ui_->m_pGroupServer->isChecked() ? "Server"
-               : ui_->m_pGroupClient->isChecked() ? "Client" : "";
+    draft.role = ui_->m_pCardServer->isChecked() ? "Server"
+               : ui_->m_pCardClient->isChecked() ? "Client" : "";
     draft.screen_name = ui_->m_pLineEditScreenName->text().trimmed().toStdString();
     draft.server_address = ui_->m_pLineEditHostname->text().trimmed().toStdString();
     draft.log_level = m_AppConfig->logLevelText().toStdString();
@@ -545,12 +575,23 @@ void MainWindow::updateApplyBar()
     if (!problem.empty()) {
         text = tr("Can't apply this yet: %1.").arg(QString::fromStdString(problem));
     } else {
-        text = tr("Applying restarts the Leapdesk service. Windows asks for administrator approval.");
+        if (applied.role.empty()) {
+            text = draft.is_server()
+                ? tr("Starts the Leapdesk service as a server named %1.").arg(QString::fromStdString(draft.screen_name))
+                : tr("Starts the Leapdesk service as a client named %1.").arg(QString::fromStdString(draft.screen_name));
+        } else if (draft.role != applied.role) {
+            text = draft.is_server() ? tr("Restarts the Leapdesk service as a server.")
+                                     : tr("Restarts the Leapdesk service as a client.");
+        } else {
+            text = tr("Restarts the Leapdesk service with the new settings.");
+        }
+        text += " " + tr("Windows asks for administrator approval.");
         if (renamed && !draft.is_server())
             text += " " + tr("The server's layout has to use the new name too.");
     }
     ui_->m_pLabelApply->setText(text);
     ui_->m_pButtonApply->setEnabled(problem.empty());
+    ui_->m_pButtonUndo->setVisible(!applied.role.empty());
     ui_->m_pFrameApply->show();
 }
 
@@ -628,6 +669,7 @@ void MainWindow::on_m_pButtonApply_clicked()
 
         loadServiceSettings();
         m_pLogWindow->startNewInstance();
+        m_Connection.reset();
         m_ExpectedRunningState = kStarted;
         set_connection_state(AppConnectionState::CONNECTING);
         refreshTailscale(false);
@@ -656,7 +698,9 @@ void MainWindow::refreshTailscale(bool showDevices)
     auto finished = [this]() {
         if (m_TailscaleProcess == nullptr)
             return;
-        m_TailscalePeers = parse_tailscale_status(m_TailscaleProcess->readAllStandardOutput());
+        const QByteArray status = m_TailscaleProcess->readAllStandardOutput();
+        m_TailscalePeers = parse_tailscale_status(status);
+        m_TailscaleName = parse_tailscale_self_name(status);
         m_TailscaleProcess->deleteLater();
         m_TailscaleProcess = nullptr;
 
@@ -703,29 +747,8 @@ void MainWindow::showTailscaleDevices()
 
 void MainWindow::updateServerPath()
 {
-    const TailscalePeer* peer = nullptr;
-    if (serviceMode() && ui_->m_pGroupClient->isChecked())
-        peer = find_tailscale_peer(m_TailscalePeers, ui_->m_pLineEditHostname->text());
-
-    ui_->m_pLabelServerPathTitle->setVisible(peer != nullptr);
-    ui_->m_pLabelServerPath->setVisible(peer != nullptr);
-    if (peer == nullptr)
-        return;
-
-    switch (peer->path) {
-    case TailscalePeer::Path::Direct:
-        ui_->m_pLabelServerPath->setText(tr("Direct, through %1").arg(peer->direct_address));
-        break;
-    case TailscalePeer::Path::Relayed:
-        ui_->m_pLabelServerPath->setText(tr("Relayed through Tailscale (%1), so the pointer may lag").arg(peer->relay));
-        break;
-    case TailscalePeer::Path::Idle:
-        ui_->m_pLabelServerPath->setText(tr("Online on Tailscale, nothing being sent yet"));
-        break;
-    case TailscalePeer::Path::Offline:
-        ui_->m_pLabelServerPath->setText(tr("Offline on Tailscale"));
-        break;
-    }
+    // the network path is a line of the Connection section
+    updateConnection();
 }
 
 void MainWindow::loadServerConfig()
@@ -779,9 +802,9 @@ void MainWindow::initConnections()
 void MainWindow::saveSettings()
 {
     // program settings
-    settings().setValue("groupServerChecked", ui_->m_pGroupServer->isChecked());
+    settings().setValue("groupServerChecked", ui_->m_pCardServer->isChecked());
     settings().setValue("configFile", ui_->m_pLineEditConfigFile->text());
-    settings().setValue("groupClientChecked", ui_->m_pGroupClient->isChecked());
+    settings().setValue("groupClientChecked", ui_->m_pCardClient->isChecked());
     settings().setValue("serverHostname", ui_->m_pLineEditHostname->text());
 
     settings().sync();
@@ -880,6 +903,10 @@ void MainWindow::updateFromLogLine(const QString &line)
     // TODO: this code makes Andrew cry
     checkConnected(line);
     checkFingerprint(line);
+    if (m_Connection.update(line)) {
+        updateStatus();
+        updateConnection();
+    }
 }
 
 void MainWindow::checkConnected(const QString& line)
@@ -959,12 +986,8 @@ void MainWindow::checkFingerprint(const QString& line)
     }
 
     if (serviceMode()) {
-        // computers pair by comparing a code instead, and the service keeps trying meanwhile
-        setStatus(is_client
-            ? tr("This computer isn't paired with the server yet. Press Pair with Server here, "
-                 "and Pair a Computer on the server.")
-            : tr("A computer that isn't paired tried to connect. To let it in, press Pair a Computer "
-                 "here, and Pair with Server on that computer."));
+        // computers pair by comparing a code instead, and the service keeps trying meanwhile;
+        // the status line says so
         return;
     }
 
@@ -1133,8 +1156,7 @@ void MainWindow::controlService(bool start, int tries)
 
 void MainWindow::setServerMode(bool isServerMode)
 {
-    ui_->m_pGroupServer->setChecked(isServerMode);
-    ui_->m_pGroupClient->setChecked(!isServerMode);
+    (isServerMode ? ui_->m_pCardServer : ui_->m_pCardClient)->setChecked(true);
 }
 
 bool MainWindow::clientArgs(QStringList& args, QString& app)
@@ -1197,7 +1219,24 @@ AppRole MainWindow::app_role() const
     // what the service runs, whatever is chosen but not applied in this window
     if (serviceMode() && !m_ServiceSettings.role.empty())
         return m_ServiceSettings.is_server() ? AppRole::Server : AppRole::Client;
-    return ui_->m_pGroupClient->isChecked() ? AppRole::Client : AppRole::Server;
+    return ui_->m_pCardClient->isChecked() ? AppRole::Client : AppRole::Server;
+}
+
+AppRole MainWindow::shownRole() const
+{
+    return app_role();
+}
+
+bool MainWindow::hasShownRole() const
+{
+    if (serviceMode())
+        return !m_ServiceSettings.role.empty();
+    return ui_->m_pCardServer->isChecked() || ui_->m_pCardClient->isChecked();
+}
+
+bool MainWindow::isRunning() const
+{
+    return connection_state_ != AppConnectionState::DISCONNECTED;
 }
 
 QString MainWindow::hostname() const
@@ -1340,45 +1379,17 @@ void MainWindow::set_connection_state(AppConnectionState state)
         ui_->m_pButtonReload->setEnabled(false);
     }
 
-    bool connected = false;
-    if (state == AppConnectionState::CONNECTED || state == AppConnectionState::TRANSFERRING) {
-        connected = true;
-    }
-
-    ui_->m_pActionStartCmdApp->setEnabled(!connected);
-    ui_->m_pActionStopCmdApp->setEnabled(connected);
-
-    switch (state)
-    {
-    case AppConnectionState::CONNECTED: {
-        if (m_AppConfig->getCryptoEnabled()) {
-            ui_->m_pLabelPadlock->show();
-        }
-        else {
-            ui_->m_pLabelPadlock->hide();
-        }
-
-        setStatus(tr("Leapdesk KVM is running."));
-
-        break;
-    }
-    case AppConnectionState::CONNECTING:
-        ui_->m_pLabelPadlock->hide();
-        setStatus(tr("Leapdesk KVM is starting."));
-        break;
-    case AppConnectionState::DISCONNECTED:
-        ui_->m_pLabelPadlock->hide();
-        setStatus(tr("Leapdesk KVM is not running."));
-        break;
-    case AppConnectionState::TRANSFERRING:
-        break;
-    default:
-        break;
-    }
+    // a service that is starting can be stopped too
+    ui_->m_pActionStartCmdApp->setEnabled(state == AppConnectionState::DISCONNECTED);
+    ui_->m_pActionStopCmdApp->setEnabled(state != AppConnectionState::DISCONNECTED);
 
     set_icon(state);
 
     connection_state_ = state;
+    if (state == AppConnectionState::DISCONNECTED)
+        m_Connection.reset();
+    updateStatus();
+    updateConnection();
 }
 
 void MainWindow::setVisible(bool visible)
@@ -1466,14 +1477,21 @@ void MainWindow::changeEvent(QEvent* event)
         {
             ui_->retranslateUi(this);
             retranslateMenuBar();
-            if (serviceMode()) {
-                ui_->m_pLabelServerName->setText(tr("Server &address:"));
+            ui_->m_pCardServer->setDescription(tr("Its keyboard and mouse control the other computers."));
+            ui_->m_pCardClient->setDescription(tr("Controlled from another computer's keyboard and mouse."));
+            if (serviceMode())
                 updateApplyBar();
-                updateServerPath();
-            }
+            updateSections();
 
             proofreadInfo();
 
+            break;
+        }
+        case QEvent::PaletteChange:
+        case QEvent::ThemeChange:
+        {
+            // the system's colours changed, between light and dark say
+            applyMutedText(this);
             break;
         }
         case QEvent::WindowStateChange:
@@ -1489,14 +1507,6 @@ void MainWindow::changeEvent(QEvent* event)
     }
     // all that do not return are allowing the event to propagate
     QMainWindow::changeEvent(event);
-}
-
-bool MainWindow::event(QEvent* event)
-{
-    if (event->type() == QEvent::LayoutRequest) {
-        setFixedSize(sizeHint());
-    }
-    return QMainWindow::event(event);
 }
 
 void MainWindow::updateZeroconfService()
@@ -1539,68 +1549,55 @@ void MainWindow::updateSSLFingerprint()
         m_pSslCertificate->generateCertificate();
     }
 
-    ui_->toolbutton_show_fingerprint->setEnabled(false);
-    ui_->m_pLabelLocalFingerprint->setText("Disabled");
-
-    if (!m_AppConfig->getCryptoEnabled()) {
-        return;
-    }
+    m_Sha256Short.clear();
+    m_Sha256Full.clear();
+    m_Sha1Full.clear();
+    m_Randomart.clear();
 
     auto local_path = inputleap::DataDirectories::local_ssl_fingerprints_path();
-    if (!inputleap::fs::exists(local_path)) {
-        return;
-    }
-
     inputleap::FingerprintDatabase db;
-    db.read(local_path);
-    if (db.fingerprints().size() != 2) {
-        return;
-    }
+    if (m_AppConfig->getCryptoEnabled() && inputleap::fs::exists(local_path))
+        db.read(local_path);
 
     for (const auto& fingerprint : db.fingerprints()) {
         if (fingerprint.algorithm == "sha1") {
+            m_Sha1Full = QString::fromStdString(inputleap::format_ssl_fingerprint(fingerprint.data));
+        } else if (fingerprint.algorithm == "sha256") {
             auto fingerprint_str = inputleap::format_ssl_fingerprint(fingerprint.data);
-            ui_->label_sha1_fingerprint_full->setText(QString::fromStdString(fingerprint_str));
-            continue;
-        }
-
-        if (fingerprint.algorithm == "sha256") {
-            auto fingerprint_str = inputleap::format_ssl_fingerprint(fingerprint.data);
-            fingerprint_str.resize(40);
-            fingerprint_str += " ...";
-
-            auto fingerprint_str_cols = inputleap::format_ssl_fingerprint_columns(fingerprint.data);
-            auto fingerprint_randomart = inputleap::create_fingerprint_randomart(fingerprint.data);
-
-            ui_->m_pLabelLocalFingerprint->setText(QString::fromStdString(fingerprint_str));
-            ui_->label_sha256_fingerprint_full->setText(QString::fromStdString(fingerprint_str_cols));
-            ui_->label_sha256_randomart->setText(QString::fromStdString(fingerprint_randomart));
+            fingerprint_str.resize(23);
+            m_Sha256Short = QString::fromStdString(fingerprint_str) + "...";
+            m_Sha256Full = QString::fromStdString(inputleap::format_ssl_fingerprint_columns(fingerprint.data));
+            m_Randomart = QString::fromStdString(inputleap::create_fingerprint_randomart(fingerprint.data));
         }
     }
 
-    ui_->toolbutton_show_fingerprint->setEnabled(true);
+    updateConnection();
 }
 
-void MainWindow::on_m_pGroupClient_toggled(bool on)
+void MainWindow::on_m_pCardClient_toggled(bool on)
 {
-    ui_->m_pGroupServer->setChecked(!on);
-    if (on) {
-        updateZeroconfService();
+    if (!on)
+        return;
+    {
+        QSignalBlocker block(ui_->m_pCardServer);
+        ui_->m_pCardServer->setChecked(false);
     }
+    updateZeroconfService();
     updateApplyBar();
-    updateServerPath();
-    updatePairedComputers();
+    updateSections();
 }
 
-void MainWindow::on_m_pGroupServer_toggled(bool on)
+void MainWindow::on_m_pCardServer_toggled(bool on)
 {
-    ui_->m_pGroupClient->setChecked(!on);
-    if (on) {
-        updateZeroconfService();
+    if (!on)
+        return;
+    {
+        QSignalBlocker block(ui_->m_pCardClient);
+        ui_->m_pCardClient->setChecked(false);
     }
+    updateZeroconfService();
     updateApplyBar();
-    updateServerPath();
-    updatePairedComputers();
+    updateSections();
 }
 
 bool MainWindow::on_m_pButtonBrowseConfigFile_clicked()
@@ -1721,6 +1718,8 @@ void MainWindow::showConfigureServer(const QString& message)
     dlg.message(message);
     if (dlg.exec() == QDialog::Accepted && saveServerConfig() && m_ExpectedRunningState == kStarted)
         appendLogInfo(tr("saved %1; the running server applies it within a few seconds").arg(fileName));
+    updateLayoutSummary();
+    updateConnection();
 }
 
 void MainWindow::on_m_pButtonConfigureServer_clicked()
@@ -1814,6 +1813,8 @@ void MainWindow::pair(pairing::Protocol::Role role)
         linked = m_ServerConfig.addScreenBeside(peer, dialog.side());
     if (!saveServerConfig())
         return;
+    updateLayoutSummary();
+    updateConnection();
     if (!linked) {
         showConfigureServer(tr("%1 was added, but the %2 edge of this screen already leads to another "
                                "screen. Link %1 to the other screens to reach it.")
@@ -1821,15 +1822,8 @@ void MainWindow::pair(pairing::Protocol::Role role)
     }
 }
 
-void MainWindow::updatePairedComputers()
+QList<MainWindow::PairedComputer> MainWindow::pairedComputers() const
 {
-    const auto folder = QString::fromStdString(inputleap::DataDirectories::ssl_fingerprints_path().u8string());
-    if (!m_PairedWatcher.directories().contains(folder) && QFileInfo::exists(folder)) {
-        if (!m_PairedWatcher.directories().isEmpty())
-            m_PairedWatcher.removePaths(m_PairedWatcher.directories());
-        m_PairedWatcher.addPath(folder);
-    }
-
     const bool server = app_role() == AppRole::Server;
     const auto db_path = server ? inputleap::DataDirectories::trusted_clients_ssl_fingerprints_path()
                                 : inputleap::DataDirectories::trusted_servers_ssl_fingerprints_path();
@@ -1856,37 +1850,31 @@ void MainWindow::updatePairedComputers()
         only_server = peer != nullptr ? peer->name : pairing::host_of(address);
     }
 
-    const auto rows = ui_->m_pWidgetPaired->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly);
-    for (QWidget* row : rows) {
-        // later, since this may be running because of a button in one of them
-        row->hide();
-        row->deleteLater();
-    }
-
-    QMap<QString, QString> labels;
+    QList<PairedComputer> paired;
     for (const auto& fingerprint : trusted) {
         const QString name = QString::fromStdString(names.name_of(fingerprint));
         const QByteArray bytes(reinterpret_cast<const char*>(fingerprint.data.data()),
                                static_cast<int>(fingerprint.data.size()));
-        const QString label = pairing::computer_label(name, only_server, bytes);
-        labels.insert(QString::fromStdString(inputleap::FingerprintDatabase::to_db_line(fingerprint)), label);
-
-        auto* row = new QWidget(ui_->m_pWidgetPaired);
-        auto* layout = new QHBoxLayout(row);
-        layout->setContentsMargins(0, 0, 0, 0);
-        auto* text = new QLabel(tr("Paired with %1.").arg(label), row);
-        text->setTextFormat(Qt::PlainText);
-        layout->addWidget(text);
-        layout->addStretch();
-        auto* button = new QPushButton(tr("Unpair %1...").arg(label), row);
-        button->setAutoDefault(false);
-        connect(button, &QPushButton::clicked, this, [this, fingerprint, name, label]() {
-            unpair(fingerprint, name, label);
-        });
-        layout->addWidget(button);
-        ui_->m_pLayoutPaired->addWidget(row);
+        paired.append({fingerprint, name, pairing::computer_label(name, only_server, bytes)});
     }
-    ui_->m_pWidgetPaired->setVisible(!trusted.empty());
+    return paired;
+}
+
+void MainWindow::updatePairedComputers()
+{
+    const auto folder = QString::fromStdString(inputleap::DataDirectories::ssl_fingerprints_path().u8string());
+    if (!m_PairedWatcher.directories().contains(folder) && QFileInfo::exists(folder)) {
+        if (!m_PairedWatcher.directories().isEmpty())
+            m_PairedWatcher.removePaths(m_PairedWatcher.directories());
+        m_PairedWatcher.addPath(folder);
+    }
+
+    const bool server = app_role() == AppRole::Server;
+    QMap<QString, QString> labels;
+    for (const PairedComputer& computer : pairedComputers())
+        labels.insert(QString::fromStdString(inputleap::FingerprintDatabase::to_db_line(computer.fingerprint)),
+                      computer.label);
+    updateConnection();
 
     // the other computer unpaired this one, or it was taken out of the list by hand
     if (server == m_PairedAsServer) {
@@ -1940,6 +1928,617 @@ void MainWindow::unpair(const inputleap::FingerprintData& fingerprint, const QSt
         m_ServerConfig.setServerName(getScreenName());
         if (m_ServerConfig.takeOffLayout(name))
             saveServerConfig();
+        updateLayoutSummary();
+        updateConnection();
+    }
+}
+
+namespace {
+
+// text in the font for names and addresses, inside rich text
+QString monoHtml(const QString& text)
+{
+    return QStringLiteral("<span style=\"font-family:'Consolas','Cascadia Mono',monospace\">%1</span>")
+        .arg(text.toHtmlEscaped().replace('\n', QLatin1String("<br>")));
+}
+
+QString linkHtml(const QString& href, const QString& text)
+{
+    return QStringLiteral("<a href=\"%1\">%2</a>").arg(href, text.toHtmlEscaped());
+}
+
+QString joinHtml(const QStringList& addresses)
+{
+    QStringList html;
+    for (const QString& address : addresses)
+        html << monoHtml(address);
+    return html.join(QLatin1String(", "));
+}
+
+// this computer's IPv4 addresses that another computer could reach
+QList<QHostAddress> reachableAddresses()
+{
+    QList<QHostAddress> reachable;
+    const auto addresses = QNetworkInterface::allAddresses();
+    for (const QHostAddress& address : addresses) {
+        if (address.protocol() == QAbstractSocket::IPv4Protocol && !address.isLoopback() && !address.isLinkLocal())
+            reachable << address;
+    }
+    return reachable;
+}
+
+bool isTailscaleAddress(const QHostAddress& address)
+{
+    return address.isInSubnet(QHostAddress(QStringLiteral("100.64.0.0")), 10);
+}
+
+} // namespace
+
+QStringList MainWindow::tailscaleAddresses() const
+{
+    QStringList addresses;
+    for (const QHostAddress& address : reachableAddresses()) {
+        if (isTailscaleAddress(address))
+            addresses << address.toString();
+    }
+    return addresses;
+}
+
+QStringList MainWindow::otherAddresses() const
+{
+    QStringList addresses;
+    for (const QHostAddress& address : reachableAddresses()) {
+        if (!isTailscaleAddress(address))
+            addresses << address.toString();
+    }
+    return addresses;
+}
+
+QString MainWindow::serverAddress() const
+{
+    QStringList addresses = tailscaleAddresses();
+    if (addresses.isEmpty())
+        addresses = otherAddresses();
+    const QString host = addresses.isEmpty() ? QHostInfo::localHostName() : addresses.first();
+    return host + ":" + QString::number(m_AppConfig->port());
+}
+
+QString MainWindow::serverLabel() const
+{
+    // the name it was paired under, when this computer is paired with just the one server
+    const auto paired = pairedComputers();
+    if (paired.size() == 1 && !paired.first().name.isEmpty())
+        return paired.first().name;
+
+    const QString address = serviceMode() ? QString::fromStdString(m_ServiceSettings.server_address) : hostname();
+    if (const TailscalePeer* peer = find_tailscale_peer(m_TailscalePeers, address))
+        return peer->name;
+    const QString host = pairing::host_of(address);
+    return host.isEmpty() ? tr("the server") : host;
+}
+
+QString MainWindow::failureText() const
+{
+    const QString failure = m_Connection.failure();
+    if (failure.contains(QLatin1String("timed out"), Qt::CaseInsensitive))
+        return tr("%1 didn't answer. Check that it's on, and online on Tailscale.").arg(serverLabel());
+    if (failure.contains(QLatin1String("refused"), Qt::CaseInsensitive))
+        return tr("Nothing answers for Leapdesk KVM on %1. Check that it runs there as the server.").arg(serverLabel());
+    return tr("Connecting failed: %1").arg(failure);
+}
+
+void MainWindow::updateSections()
+{
+    const bool has_role = hasShownRole();
+    const bool server = has_role && shownRole() == AppRole::Server;
+    const bool fresh = serviceMode() && m_ServiceSettings.role.empty();
+
+    ui_->m_pLabelThisTitle->setText(fresh ? tr("Set up this computer") : tr("This computer"));
+    ui_->m_pLabelSetupHelp->setVisible(fresh);
+    ui_->m_pWidgetServerAddress->setVisible(ui_->m_pCardClient->isChecked());
+    ui_->m_pLineScreens->setVisible(server);
+    ui_->m_pSectionScreens->setVisible(server);
+    ui_->m_pLineConnection->setVisible(has_role);
+    ui_->m_pSectionConnection->setVisible(has_role);
+    ui_->m_pButtonPairClient->setVisible(server);
+    ui_->m_pLabelNotSetUp->setVisible(!has_role);
+    ui_->m_pButtonToggleStart->setVisible(has_role || !serviceMode());
+    ui_->m_pActionSave->setVisible(server);
+
+    if (server)
+        updateLayoutSummary();
+    updatePairedComputers();
+    updateStatus();
+}
+
+void MainWindow::updateStatus()
+{
+    Tone tone = Tone::Idle;
+    QString title;
+    QString detail;
+    const bool server = shownRole() == AppRole::Server;
+
+    if (!hasShownRole()) {
+        title = tr("Not set up yet");
+        detail = serviceMode() ? tr("Choose Server or Client, then press Apply.") : tr("Choose Server or Client.");
+    } else if (!isRunning()) {
+        title = tr("Stopped");
+        detail = server ? tr("Clients can't connect until you start it.")
+                        : tr("This computer isn't taking input from the server.");
+    } else if (server) {
+        title = tr("Running as server");
+        const QStringList& clients = m_Connection.connectedClients();
+        if (m_Connection.unpairedAttempt()) {
+            tone = Tone::Warn;
+            detail = tr("A computer that isn't paired tried to connect. To let it in, press Pair a Computer "
+                        "here, and Pair with Server on that computer.");
+        } else if (!clients.isEmpty()) {
+            tone = Tone::Ok;
+            detail = tr("%1 connected").arg(QLocale().createSeparatedList(clients));
+        } else if (m_Connection.knowsClients()) {
+            tone = Tone::Warn;
+            detail = tr("No clients connected");
+        } else {
+            // this window opened after the server started, so it can't tell who is connected
+            tone = Tone::Ok;
+            detail = tr("Clients connect to %1").arg(serverAddress());
+        }
+    } else {
+        const QString server_name = serverLabel();
+        switch (m_Connection.client()) {
+        case ConnectionStatus::Client::Connected:
+            tone = Tone::Ok;
+            title = tr("Connected to %1").arg(server_name);
+            detail = tr("Its keyboard and mouse work here when the pointer crosses over.");
+            break;
+        case ConnectionStatus::Client::NotPaired:
+            tone = Tone::Warn;
+            title = tr("Not paired yet");
+            detail = tr("This computer isn't paired with the server yet. Press Pair with Server here, "
+                        "and Pair a Computer on the server.");
+            break;
+        case ConnectionStatus::Client::Unreachable:
+            tone = Tone::Bad;
+            title = tr("Can't reach the server");
+            detail = failureText();
+            break;
+        case ConnectionStatus::Client::NameRefused:
+            tone = Tone::Bad;
+            title = tr("The server doesn't know this computer");
+            detail = tr("%1 has no screen called %2. Pair with it again.").arg(server_name, getScreenName());
+            break;
+        case ConnectionStatus::Client::NameTaken:
+            tone = Tone::Bad;
+            title = tr("This name is taken");
+            detail = tr("Another computer called %1 is connected to %2. Give this one another name above.")
+                         .arg(getScreenName(), server_name);
+            break;
+        case ConnectionStatus::Client::Connecting:
+            tone = Tone::Warn;
+            title = tr("Connecting to %1").arg(server_name);
+            detail = tr("Waiting for the server to answer.");
+            break;
+        case ConnectionStatus::Client::Unknown:
+            // this window opened after the client started, and it hasn't said anything since
+            tone = Tone::Ok;
+            title = tr("Running as client");
+            detail = tr("Connects to %1.").arg(server_name);
+            break;
+        }
+    }
+
+    // something that just happened is shown until the status itself changes
+    const QString shown = QString::number(static_cast<int>(tone)) + title;
+    if (shown != m_StatusShown) {
+        if (!m_StatusShown.isEmpty())
+            m_StatusNotice.clear();
+        m_StatusShown = shown;
+    }
+
+    ui_->m_pStatusDot->setTone(tone);
+    ui_->m_pStatusTitle->setText(title);
+    const QString text = m_StatusNotice.isEmpty() ? detail : m_StatusNotice;
+    ui_->m_pStatusLabel->setText(text);
+    ui_->m_pStatusLabel->setVisible(!text.isEmpty());
+    if (m_pTrayIcon != nullptr)
+        m_pTrayIcon->setToolTip(QStringLiteral("Leapdesk KVM: %1").arg(title));
+}
+
+QLabel* MainWindow::addFact(const QString& name, const QString& text)
+{
+    QWidget* parent = m_pFacts->parentWidget();
+    const int row = m_pFacts->count() == 0 ? 0 : m_pFacts->rowCount();
+    auto* label = new QLabel(name, parent);
+    label->setTextFormat(Qt::PlainText);
+    markMuted(label);
+    auto* value = new QLabel(text, parent);
+    value->setTextFormat(Qt::RichText);
+    value->setWordWrap(true);
+    value->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    connect(value, &QLabel::linkActivated, this, &MainWindow::connectionLinkActivated);
+    m_pFacts->addWidget(label, row, 0, Qt::AlignTop);
+    m_pFacts->addWidget(value, row, 1);
+    return value;
+}
+
+void MainWindow::addCheck(Tone tone, const QString& title, const QString& detail, QWidget* action)
+{
+    auto* row = new QWidget(m_pChecks->parentWidget());
+    auto* layout = new QHBoxLayout(row);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(10);
+    layout->addWidget(new CheckMark(tone, row), 0, Qt::AlignTop);
+
+    auto* text = new QVBoxLayout;
+    text->setSpacing(1);
+    auto* heading = new QLabel(title, row);
+    heading->setTextFormat(Qt::PlainText);
+    QFont font = heading->font();
+    font.setWeight(QFont::DemiBold);
+    heading->setFont(font);
+    text->addWidget(heading);
+    auto* words = new QLabel(detail, row);
+    words->setTextFormat(Qt::RichText);
+    words->setWordWrap(true);
+    words->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    markMuted(words);
+    text->addWidget(words);
+    layout->addLayout(text, 1);
+
+    if (action != nullptr)
+        layout->addWidget(action, 0, Qt::AlignVCenter);
+    m_pChecks->addWidget(row);
+}
+
+void MainWindow::addCertificateFact()
+{
+    if (m_Sha256Short.isEmpty())
+        return;
+
+    addFact(tr("This computer's certificate"),
+            QStringLiteral("SHA256 ") + monoHtml(m_Sha256Short) + QStringLiteral("&nbsp;&nbsp;") +
+            linkHtml(QStringLiteral("details"), m_fingerprint_expanded ? tr("Hide details") : tr("Show details")));
+    if (!m_fingerprint_expanded)
+        return;
+
+    QWidget* parent = m_pFacts->parentWidget();
+    auto* details = new QWidget(parent);
+    auto* layout = new QHBoxLayout(details);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(16);
+    auto* art = new QLabel(m_Randomart, details);
+    art->setTextFormat(Qt::PlainText);
+    art->setFont(monospaceFont(art->font()));
+    art->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    art->setAccessibleName(tr("Randomart of this computer's certificate"));
+    layout->addWidget(art, 0, Qt::AlignTop);
+    auto* full = new QLabel(details);
+    full->setTextFormat(Qt::RichText);
+    full->setWordWrap(true);
+    full->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    full->setText(QStringLiteral("<b>%1</b><br>%2<br><br><b>%3</b><br>%4")
+                      .arg(tr("SHA256").toHtmlEscaped(), monoHtml(m_Sha256Full),
+                           tr("SHA1, only to compare with older versions").toHtmlEscaped(), monoHtml(m_Sha1Full)));
+    layout->addWidget(full, 1, Qt::AlignTop);
+    m_pFacts->addWidget(details, m_pFacts->rowCount(), 1);
+}
+
+void MainWindow::addCopyAndPasteFact()
+{
+    QString text;
+    if (shownRole() == AppRole::Server && !m_ServerConfig.clipboardSharing())
+        text = tr("Clipboard sharing is off in the server's options, so nothing copied crosses over.");
+    else if (shownRole() == AppRole::Server)
+        text = tr("Text and images cross with the pointer.");
+    else
+        text = tr("Text and images cross with the pointer, unless the server's options turn that off.");
+#if defined(Q_OS_WIN)
+    if (shownRole() == AppRole::Client || m_ServerConfig.clipboardSharing())
+        text += " " + tr("Copied files are sent with Taildrop when you paste them, in a window that shows "
+                         "the progress and can cancel.");
+#endif
+    addFact(tr("Copy and paste"), text.toHtmlEscaped());
+}
+
+void MainWindow::addPairedTable(const QList<PairedComputer>& paired)
+{
+    auto* table = new QWidget(ui_->m_pWidgetConnection);
+    auto* grid = new QGridLayout(table);
+    grid->setContentsMargins(0, 6, 0, 0);
+    grid->setHorizontalSpacing(18);
+    grid->setVerticalSpacing(8);
+    grid->setColumnStretch(0, 1);
+
+    const QStringList heads = {tr("Paired computer"), tr("Network path"), tr("Status")};
+    for (int column = 0; column < heads.size(); column++) {
+        auto* head = new QLabel(heads[column], table);
+        QFont font = head->font();
+        font.setWeight(QFont::DemiBold);
+        head->setFont(font);
+        markMuted(head);
+        grid->addWidget(head, 0, column);
+    }
+    auto* line = new QFrame(table);
+    line->setFrameShape(QFrame::HLine);
+    line->setFrameShadow(QFrame::Sunken);
+    grid->addWidget(line, 1, 0, 1, 4);
+
+    if (paired.isEmpty()) {
+        auto* none = new QLabel(tr("Nothing paired yet. Press Pair a Computer, then Pair with Server on the "
+                                   "other computer."), table);
+        none->setWordWrap(true);
+        markMuted(none);
+        grid->addWidget(none, 2, 0, 1, 4);
+    }
+
+    auto placed = [this](const QString& name) {
+        for (const ScreenLink& link : std::as_const(m_ServerConfig).links()) {
+            if (link.target.compare(name, Qt::CaseInsensitive) == 0)
+                return true;
+        }
+        return false;
+    };
+
+    int row = 2;
+    for (const PairedComputer& computer : paired) {
+        const QString name = computer.name.isEmpty() ? computer.label : computer.name;
+        const TailscalePeer* peer = find_tailscale_peer(m_TailscalePeers, name);
+
+        auto* who = new QLabel(table);
+        who->setTextFormat(Qt::RichText);
+        who->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        who->setText(computer.label.toHtmlEscaped() + (peer != nullptr ? "<br>" + monoHtml(peer->address) : QString()));
+        grid->addWidget(who, row, 0);
+
+        if (peer != nullptr) {
+            Tone tone = Tone::Idle;
+            QString path;
+            switch (peer->path) {
+            case TailscalePeer::Path::Direct: path = tr("Direct"); break;
+            case TailscalePeer::Path::Relayed: tone = Tone::Warn; path = tr("Relayed (%1)").arg(peer->relay); break;
+            case TailscalePeer::Path::Idle: path = tr("Online"); break;
+            case TailscalePeer::Path::Offline: tone = Tone::Bad; path = tr("Offline"); break;
+            }
+            grid->addWidget(new Chip(path, tone, table), row, 1, Qt::AlignLeft | Qt::AlignVCenter);
+        }
+
+        auto* chips = new QWidget(table);
+        auto* chips_layout = new QHBoxLayout(chips);
+        chips_layout->setContentsMargins(0, 0, 0, 0);
+        chips_layout->setSpacing(6);
+        if (isRunning() && m_Connection.isConnected(name))
+            chips_layout->addWidget(new Chip(tr("Connected"), Tone::Ok, chips));
+        else if (isRunning() && m_Connection.knowsClients())
+            chips_layout->addWidget(new Chip(tr("Not connected"), Tone::Idle, chips));
+        if (!computer.name.isEmpty() && !placed(computer.name))
+            chips_layout->addWidget(new Chip(tr("Not placed"), Tone::Warn, chips));
+        chips_layout->addStretch();
+        grid->addWidget(chips, row, 2);
+
+        auto* button = new QPushButton(tr("Unpair..."), table);
+        button->setAccessibleName(tr("Unpair %1...").arg(computer.label));
+        button->setAutoDefault(false);
+        connect(button, &QPushButton::clicked, this, [this, computer]() {
+            unpair(computer.fingerprint, computer.name, computer.label);
+        });
+        grid->addWidget(button, row, 3);
+        row++;
+    }
+
+    ui_->m_pWidgetConnection->layout()->addWidget(table);
+}
+
+void MainWindow::updateConnection()
+{
+    auto* layout = qobject_cast<QVBoxLayout*>(ui_->m_pWidgetConnection->layout());
+    if (layout == nullptr)
+        return;
+
+    // later, since this may be running because of a button or link in what is taken away
+    while (QLayoutItem* item = layout->takeAt(0)) {
+        if (QWidget* widget = item->widget()) {
+            widget->hide();
+            widget->deleteLater();
+        }
+        delete item;
+    }
+    m_pFacts = nullptr;
+    m_pChecks = nullptr;
+    if (!hasShownRole())
+        return;
+
+    const bool server = shownRole() == AppRole::Server;
+    const bool service = serviceMode();
+    const auto paired = pairedComputers();
+
+    QWidget* checks = nullptr;
+    if (!server) {
+        checks = new QWidget(ui_->m_pWidgetConnection);
+        m_pChecks = new QVBoxLayout(checks);
+        m_pChecks->setContentsMargins(0, 0, 0, 4);
+        m_pChecks->setSpacing(10);
+        layout->addWidget(checks);
+    }
+    auto* facts = new QWidget(ui_->m_pWidgetConnection);
+    m_pFacts = new QGridLayout(facts);
+    m_pFacts->setContentsMargins(0, 0, 0, 0);
+    m_pFacts->setHorizontalSpacing(18);
+    m_pFacts->setVerticalSpacing(8);
+    m_pFacts->setColumnStretch(1, 1);
+    layout->addWidget(facts);
+
+    if (server) {
+        const QString address = serverAddress();
+        addFact(tr("Clients connect to"),
+                monoHtml(address) + QStringLiteral("&nbsp;&nbsp;") + linkHtml(QStringLiteral("copy"), tr("Copy")));
+        const QStringList tailscale = tailscaleAddresses();
+        const QStringList others = otherAddresses();
+        QString addresses;
+        if (!tailscale.isEmpty() && !others.isEmpty())
+            addresses = tr("%1 on Tailscale, %2 on other networks").arg(joinHtml(tailscale), joinHtml(others));
+        else if (!tailscale.isEmpty())
+            addresses = tr("%1 on Tailscale").arg(joinHtml(tailscale));
+        else if (!others.isEmpty())
+            addresses = joinHtml(others);
+        else
+            addresses = tr("Unknown").toHtmlEscaped();
+        addFact(tr("IP addresses"), addresses);
+        if (!m_TailscaleName.isEmpty())
+            addFact(tr("Tailscale name"), monoHtml(m_TailscaleName));
+#if defined(Q_OS_WIN)
+        if (service)
+            addFact(tr("Firewall"), tr("The installer opened port 24800 for clients, and 24802 for pairing.").toHtmlEscaped());
+#endif
+    }
+
+    if (m_AppConfig->getCryptoEnabled()) {
+        addFact(tr("Encryption"),
+                (server ? tr("TLS. Each side keeps the other's certificate fingerprint and refuses any other.")
+                        : tr("TLS, with the server's certificate fingerprint pinned.")).toHtmlEscaped());
+    } else {
+        addFact(tr("Encryption"), tr("Off, so the other computer isn't checked. Turn it on in Settings.").toHtmlEscaped());
+    }
+    addCertificateFact();
+    addCopyAndPasteFact();
+    if (service) {
+        addFact(tr("Runs as"), tr("The Leapdesk service, with administrator rights, so it also works on UAC "
+                                  "prompts and the sign-in screen.").toHtmlEscaped());
+    }
+
+    if (server) {
+        addPairedTable(paired);
+        applyMutedText(ui_->m_pWidgetConnection);
+        return;
+    }
+
+    // what a client checks, in the order it gets to them
+    const QString address = service ? QString::fromStdString(m_ServiceSettings.server_address) : hostname();
+    const QString server_name = serverLabel().toHtmlEscaped();
+    const TailscalePeer* peer = find_tailscale_peer(m_TailscalePeers, address);
+    if (address.trimmed().isEmpty())
+        addCheck(Tone::Bad, tr("Server"), tr("No server address yet. Enter one above.").toHtmlEscaped());
+    else if (peer != nullptr)
+        addCheck(Tone::Ok, tr("Server"), tr("%1, which is %2 on your tailnet").arg(monoHtml(address), peer->name.toHtmlEscaped()));
+    else if (!m_TailscalePeers.isEmpty())
+        addCheck(Tone::Idle, tr("Server"), tr("%1, which isn't a device on your tailnet").arg(monoHtml(address)));
+    else
+        addCheck(Tone::Ok, tr("Server"), monoHtml(address));
+
+    if (peer != nullptr) {
+        switch (peer->path) {
+        case TailscalePeer::Path::Direct:
+            addCheck(Tone::Ok, tr("Network path"), tr("Direct, through %1").arg(monoHtml(peer->direct_address)));
+            break;
+        case TailscalePeer::Path::Relayed:
+            addCheck(Tone::Warn, tr("Network path"),
+                     tr("Relayed through Tailscale (%1), so the pointer may lag").arg(peer->relay).toHtmlEscaped());
+            break;
+        case TailscalePeer::Path::Idle:
+            addCheck(Tone::Ok, tr("Network path"), tr("Online on Tailscale, nothing being sent yet").toHtmlEscaped());
+            break;
+        case TailscalePeer::Path::Offline:
+            addCheck(Tone::Bad, tr("Network path"), tr("Offline on Tailscale").toHtmlEscaped());
+            break;
+        }
+    }
+
+    const QString on_server = tr("Leapdesk on the server");
+    const auto state = m_Connection.client();
+    if (!isRunning()) {
+        addCheck(Tone::Idle, on_server, tr("Not checked while Leapdesk KVM is stopped here.").toHtmlEscaped());
+    } else {
+        switch (state) {
+        case ConnectionStatus::Client::Connected:
+            addCheck(Tone::Ok, on_server, tr("Running as server, and this computer is connected.").toHtmlEscaped());
+            break;
+        case ConnectionStatus::Client::NotPaired:
+            addCheck(Tone::Ok, on_server, tr("Running as server, and answering.").toHtmlEscaped());
+            break;
+        case ConnectionStatus::Client::Unreachable:
+            addCheck(Tone::Bad, on_server, failureText().toHtmlEscaped());
+            break;
+        case ConnectionStatus::Client::NameRefused:
+            addCheck(Tone::Bad, on_server, tr("%1 has no screen called %2. Pair with it again.")
+                                               .arg(server_name, getScreenName().toHtmlEscaped()));
+            break;
+        case ConnectionStatus::Client::NameTaken:
+            addCheck(Tone::Bad, on_server, tr("Another computer called %1 is connected to %2. Give this one another name above.")
+                                               .arg(getScreenName().toHtmlEscaped(), server_name));
+            break;
+        case ConnectionStatus::Client::Connecting:
+            addCheck(Tone::Idle, on_server, tr("Connecting...").toHtmlEscaped());
+            break;
+        case ConnectionStatus::Client::Unknown:
+            addCheck(Tone::Idle, on_server, tr("Not known yet. This shows once the client next connects, or fails to.").toHtmlEscaped());
+            break;
+        }
+    }
+
+    const bool not_paired = state == ConnectionStatus::Client::NotPaired;
+    if (not_paired || paired.isEmpty()) {
+        addCheck(Tone::Warn, tr("Pairing"), tr("Not paired with %1 yet. Press Pair with Server above, and Pair a "
+                                               "Computer on %1.").arg(server_name));
+    }
+    for (const PairedComputer& computer : paired) {
+        auto* button = new QPushButton(tr("Unpair..."));
+        button->setAccessibleName(tr("Unpair %1...").arg(computer.label));
+        button->setAutoDefault(false);
+        connect(button, &QPushButton::clicked, this, [this, computer]() {
+            unpair(computer.fingerprint, computer.name, computer.label);
+        });
+        addCheck(not_paired ? Tone::Idle : Tone::Ok, tr("Pairing"),
+                 tr("Paired with %1. Both sides check each other's certificate.").arg(computer.label.toHtmlEscaped()),
+                 button);
+    }
+
+    addCheck(Tone::Idle, tr("Screen position"),
+             tr("Set on %1, in its Leapdesk KVM window.").arg(server_name));
+    applyMutedText(ui_->m_pWidgetConnection);
+}
+
+void MainWindow::updateLayoutSummary()
+{
+    // the running server changes the file too, as when a client unpairs it
+    const QString fileName = ui_->m_pLineEditConfigFile->text();
+    if (QFile::exists(fileName) && m_ServerConfig.changedOnDisk(fileName))
+        m_ServerConfig.load(fileName, &m_ServerConfigError);
+
+    const QString self = getScreenName();
+    QStringList lines;
+    for (const Screen& screen : std::as_const(m_ServerConfig).screens()) {
+        if (screen.name().compare(self, Qt::CaseInsensitive) == 0)
+            continue;
+        QStringList ways;
+        for (const ScreenLink& link : std::as_const(m_ServerConfig).links()) {
+            if (link.source.compare(self, Qt::CaseInsensitive) != 0 ||
+                link.target.compare(screen.name(), Qt::CaseInsensitive) != 0)
+                continue;
+            ways << (link.coversWholeSourceEdge()
+                         ? tr("the %1 edge").arg(ScreenLink::sideLabel(link.side))
+                         : tr("the %1 edge from %2 % to %3 %").arg(ScreenLink::sideLabel(link.side),
+                                                                   QString::number(link.sourceStart),
+                                                                   QString::number(link.sourceEnd)));
+        }
+        lines << (ways.isEmpty()
+                      ? tr("%1 isn't reached from this computer's screen yet.").arg(screen.name())
+                      : tr("%1 is reached through %2 of this computer's screen.")
+                            .arg(screen.name(), QLocale().createSeparatedList(ways)));
+    }
+    if (lines.isEmpty())
+        lines << tr("No other screens yet. Pairing a computer adds it here.");
+    ui_->m_pLabelLayout->setText(lines.join('\n'));
+}
+
+void MainWindow::connectionLinkActivated(const QString& link)
+{
+    if (link == QLatin1String("copy")) {
+        const QString address = serverAddress();
+        QGuiApplication::clipboard()->setText(address);
+        setStatus(tr("Copied %1.").arg(address));
+    } else if (link == QLatin1String("details")) {
+        m_fingerprint_expanded = !m_fingerprint_expanded;
+        // later, since the link is in what's built again
+        QTimer::singleShot(0, this, &MainWindow::updateConnection);
     }
 }
 

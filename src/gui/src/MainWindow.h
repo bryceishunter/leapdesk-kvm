@@ -22,8 +22,10 @@
 #include "inputleap/ServiceSettings.h"
 #include "net/FingerprintData.h"
 #include "AppConnectionState.h"
+#include "ConnectionStatus.h"
 #include "Pairing.h"
 #include "TailscalePeers.h"
+#include "WindowParts.h"
 
 #include <QFileSystemWatcher>
 #include <QMainWindow>
@@ -32,6 +34,7 @@
 #include <QSettings>
 #include <QProcess>
 #include <QThread>
+#include <QTimer>
 
 
 
@@ -45,6 +48,8 @@
 #include <memory>
 
 class QAction;
+class QGridLayout;
+class QVBoxLayout;
 class QMenu;
 class QLineEdit;
 class QGroupBox;
@@ -120,8 +125,8 @@ public slots:
         void setServerMode(bool isServerMode);
 
     protected slots:
-        void on_m_pGroupClient_toggled(bool on);
-        void on_m_pGroupServer_toggled(bool on);
+        void on_m_pCardClient_toggled(bool on);
+        void on_m_pCardServer_toggled(bool on);
         bool on_m_pButtonBrowseConfigFile_clicked();
         void on_m_pButtonConfigureServer_clicked();
         void on_m_pButtonApply_clicked();
@@ -167,8 +172,46 @@ public slots:
         void updateServerPath();
         // pairs with a client as the server, or with the server as a client, and trusts it
         void pair(pairing::Protocol::Role role);
-        // shows the computers this one is paired with, each with a button to unpair it
+        // the role the sections below "This computer" are for: the one the service runs, or
+        // without the service, the one chosen
+        AppRole shownRole() const;
+        bool hasShownRole() const;
+        // shows the sections for the role, and what's in them
+        void updateSections();
+        // the line across the top: what's running, and whether it's connected
+        void updateStatus();
+        // the Connection section: the computers this one is paired with, each with a button to
+        // unpair it, and the facts about this one
         void updatePairedComputers();
+        void updateConnection();
+        // the Screens section, until the layout can be edited in the window
+        void updateLayoutSummary();
+        // the computers this one trusts, as they're shown
+        struct PairedComputer {
+            inputleap::FingerprintData fingerprint;
+            QString name;   // what it was called when paired, or empty
+            QString label;  // what it's called here
+        };
+        QList<PairedComputer> pairedComputers() const;
+        // what the server this client uses is called
+        QString serverLabel() const;
+        // why this client can't connect, from what it logged
+        QString failureText() const;
+        // a fact in the Connection section, such as "Encryption"; returns the label holding text
+        QLabel* addFact(const QString& name, const QString& text);
+        // a line saying whether something is right, with what to do if it isn't
+        void addCheck(Tone tone, const QString& title, const QString& detail, QWidget* action = nullptr);
+        void addPairedTable(const QList<PairedComputer>& paired);
+        void addCertificateFact();
+        void addCopyAndPasteFact();
+        void connectionLinkActivated(const QString& link);
+        // this computer's IPv4 addresses, those on Tailscale first
+        QStringList tailscaleAddresses() const;
+        QStringList otherAddresses() const;
+        // where clients reach this server
+        QString serverAddress() const;
+        // is the service running, as far as this window can tell
+        bool isRunning() const;
         // asks, then stops trusting the computer with this fingerprint; its running server or
         // client notices, and tells that computer if it's connected
         void unpair(const inputleap::FingerprintData& fingerprint, const QString& name, const QString& label);
@@ -186,7 +229,6 @@ public slots:
         void stopService();
         void stopDesktop();
         void changeEvent(QEvent* event) override;
-        bool event(QEvent* event) override;
         void retranslateMenuBar();
 #if defined(Q_OS_WIN)
         bool isServiceRunning(QString name);
@@ -234,8 +276,23 @@ public slots:
         LogWindow *m_pLogWindow;
 
         bool m_fingerprint_expanded = false;
+        // this computer's certificate, as the Connection section shows it
+        QString m_Sha256Short;
+        QString m_Sha256Full;
+        QString m_Sha1Full;
+        QString m_Randomart;
+        // where the Connection section is being filled in
+        QGridLayout* m_pFacts = nullptr;
+        QVBoxLayout* m_pChecks = nullptr;
+        // what the running server or client has said
+        ConnectionStatus m_Connection;
+        // something that just happened, shown under the status line until the status changes
+        QString m_StatusNotice;
+        QString m_StatusShown;
+        QTimer m_ServicePoll;
         inputleap::ServiceSettings m_ServiceSettings;
         QList<TailscalePeer> m_TailscalePeers;
+        QString m_TailscaleName;
         QProcess* m_TailscaleProcess = nullptr;
         bool m_ShowTailscaleDevices = false;
         QFileSystemWatcher m_PairedWatcher;
