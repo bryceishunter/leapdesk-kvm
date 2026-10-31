@@ -47,12 +47,14 @@ static QString check_name_param(QString name)
     return "";
 }
 
-ScreenSettingsDialog::ScreenSettingsDialog(QWidget* parent, Screen* pScreen) :
+ScreenSettingsDialog::ScreenSettingsDialog(QWidget* parent, Screen* pScreen, bool canRename) :
     QDialog(parent, Qt::WindowTitleHint | Qt::WindowSystemMenuHint),
     ui_{std::make_unique<Ui::ScreenSettingsDialog>()},
     m_pScreen(pScreen)
 {
     ui_->setupUi(this);
+    // a computer's name is set on that computer
+    ui_->m_pLineEditName->setReadOnly(!canRename);
 
     ui_->m_pLineEditName->setText(check_name_param(m_pScreen->name()));
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)

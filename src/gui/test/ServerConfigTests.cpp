@@ -419,3 +419,78 @@ TEST_F(ServerConfigTests, save_newConfiguration_writesOnlyWhatWasSet)
     EXPECT_TRUE(server.hasNeighbor("studio", inputleap::kLeft));
     EXPECT_FALSE(text.contains("clipboardSharing")) << text.toStdString();
 }
+
+TEST_F(ServerConfigTests, placementOf_findsTheLinkFromTheServer)
+{
+    TestServerConfig config = loaded(kPartialEdgeLayout);
+
+    ScreenLink placement;
+    ASSERT_TRUE(config.placementOf("STUDIO", &placement));
+    EXPECT_EQ(placement.side, ScreenLink::Side::Down);
+    EXPECT_DOUBLE_EQ(placement.sourceStart, 42.86);
+    EXPECT_DOUBLE_EQ(placement.sourceEnd, 100);
+    EXPECT_FALSE(config.placementOf("laptop", &placement));
+}
+
+TEST_F(ServerConfigTests, place_movesAScreenAndItsWayBack)
+{
+    TestServerConfig config = loaded(kPartialEdgeLayout);
+
+    ScreenLink placement;
+    placement.side = ScreenLink::Side::Right;
+    placement.sourceStart = 0;
+    placement.sourceEnd = 50;
+    placement.targetStart = 10;
+    placement.targetEnd = 90;
+    ASSERT_TRUE(config.place("Studio", placement, nullptr));
+
+    inputleap::Config server = serverView(saved(config));
+    EXPECT_FALSE(server.hasNeighbor("desk", inputleap::kBottom));
+    EXPECT_FALSE(server.hasNeighbor("studio", inputleap::kTop));
+    EXPECT_EQ(server.getNeighbor("desk", inputleap::kRight, 0.25f, nullptr), "studio");
+    EXPECT_EQ(server.getNeighbor("desk", inputleap::kRight, 0.75f, nullptr), "");
+    EXPECT_EQ(server.getNeighbor("studio", inputleap::kLeft, 0.5f, nullptr), "desk");
+    EXPECT_EQ(config.screens().size(), 2u);
+}
+
+TEST_F(ServerConfigTests, place_aNewScreenAddsIt)
+{
+    TestServerConfig config = loaded(kPartialEdgeLayout);
+
+    ScreenLink placement;
+    placement.side = ScreenLink::Side::Down;
+    placement.sourceStart = 0;
+    placement.sourceEnd = 42.86;
+    ASSERT_TRUE(config.place("laptop", placement, nullptr));
+
+    inputleap::Config server = serverView(saved(config));
+    EXPECT_EQ(server.getNeighbor("desk", inputleap::kBottom, 0.2f, nullptr), "laptop");
+    EXPECT_EQ(server.getNeighbor("desk", inputleap::kBottom, 0.9f, nullptr), "studio");
+}
+
+TEST_F(ServerConfigTests, place_aStretchInUse_changesNothing)
+{
+    TestServerConfig config = loaded(kPartialEdgeLayout);
+
+    ScreenLink placement;
+    placement.side = ScreenLink::Side::Down;
+    placement.sourceStart = 0;
+    placement.sourceEnd = 50;
+    QString blocked_by;
+    EXPECT_FALSE(config.place("laptop", placement, &blocked_by));
+    EXPECT_EQ(blocked_by.toStdString(), "studio");
+    EXPECT_FALSE(config.hasScreen("laptop"));
+    EXPECT_EQ(saved(config).toStdString(), std::string(kPartialEdgeLayout));
+}
+
+TEST_F(ServerConfigTests, unplace_keepsTheScreenWithoutLinksToTheServer)
+{
+    TestServerConfig config = loaded(kPartialEdgeLayout);
+
+    config.unplace("studio");
+
+    inputleap::Config server = serverView(saved(config));
+    EXPECT_TRUE(server.isScreen("studio"));
+    EXPECT_FALSE(server.hasNeighbor("desk", inputleap::kBottom));
+    EXPECT_FALSE(server.hasNeighbor("studio", inputleap::kTop));
+}

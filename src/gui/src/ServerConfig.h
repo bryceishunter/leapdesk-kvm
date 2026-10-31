@@ -31,7 +31,6 @@
 
 class QSettings;
 class QString;
-class ServerConfigDialog;
 class MainWindow;
 
 namespace inputleap { class Config; }
@@ -42,9 +41,9 @@ namespace inputleap { class Config; }
 // class does not model (comments aside) therefore survives a save untouched.
 class ServerConfig : public BaseConfig
 {
-    friend class ServerConfigDialog;
     friend class ServerOptionsSection;
     friend class HotkeysSection;
+    friend class ScreensSection;
 
     public:
         ServerConfig(QSettings* settings, QString serverName, MainWindow* mainWindow);
@@ -116,6 +115,21 @@ class ServerConfig : public BaseConfig
         // Takes the screen called name, in any case, and its links off the layout. Returns false
         // if there is no such screen. The server's own screen stays.
         bool takeOffLayout(const QString& name);
+
+        // Where the pointer leaves the server's screen for the screen called name: the first
+        // link from the one to the other. False if there is none.
+        bool placementOf(const QString& name, ScreenLink* placement) const;
+        // The screen that a link from this stretch of the server screen's edge leads to, other
+        // than except, or empty if the stretch is free.
+        QString stretchLeadsTo(ScreenLink::Side side, double start, double end, const QString& except) const;
+        // Leads the stretch of the server screen's edge in placement to the screen called name,
+        // entering it where placement says, and leads it back the same way. Any other links
+        // between the two go. A screen that's new is added. Returns false, changing nothing and
+        // saying in blockedBy where it leads, if the stretch already leads somewhere else.
+        bool place(const QString& name, const ScreenLink& placement, QString* blockedBy);
+        // Takes away every link between the server's screen and the screen called name, which
+        // stays on the list of screens.
+        void unplace(const QString& name);
 
     protected:
         QSettings& settings() { return *m_pSettings; }

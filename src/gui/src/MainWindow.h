@@ -107,8 +107,8 @@ class MainWindow : public QMainWindow
         void open();
         QString getScreenName();
         ServerConfig& serverConfig() { return m_ServerConfig; }
-        void showConfigureServer(const QString& message);
-        void showConfigureServer() { showConfigureServer(""); }
+        // shows the Screens section, with a screen selected if one is named, saying message
+        void showScreens(const QString& message, const QString& select = QString());
         void autoAddScreen(const QString name);
         void updateZeroconfService();
         void serverDetected(const QString name);
@@ -128,7 +128,6 @@ public slots:
         void on_m_pCardClient_toggled(bool on);
         void on_m_pCardServer_toggled(bool on);
         bool on_m_pButtonBrowseConfigFile_clicked();
-        void on_m_pButtonConfigureServer_clicked();
         void on_m_pButtonApply_clicked();
         void on_m_pButtonUndo_clicked();
         void on_m_pButtonTailscale_clicked();
@@ -184,8 +183,11 @@ public slots:
         // unpair it, and the facts about this one
         void updatePairedComputers();
         void updateConnection();
-        // the Screens section, until the layout can be edited in the window
-        void updateLayoutSummary();
+        // the Screens section, with the paired computers and whether each is connected
+        void updateScreens();
+        void updateMonitors();
+        // the Screens, Hotkeys and Server options sections, after the configuration was loaded
+        void refreshServerSections();
         // loads the layout file again if something else changed it, unless there's a change of
         // this window's still to save; returns whether it was loaded
         bool reloadServerConfigQuietly();

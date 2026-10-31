@@ -818,6 +818,76 @@ bool ServerConfig::takeOffLayout(const QString& name)
     return false;
 }
 
+namespace {
+
+bool sameName(const QString& a, const QString& b)
+{
+    return a.compare(b, Qt::CaseInsensitive) == 0;
+}
+
+} // namespace
+
+bool ServerConfig::placementOf(const QString& name, ScreenLink* placement) const
+{
+    for (const ScreenLink& link : m_Links) {
+        if (sameName(link.source, m_ServerName) && sameName(link.target, name)) {
+            *placement = link;
+            return true;
+        }
+    }
+    return false;
+}
+
+QString ServerConfig::stretchLeadsTo(ScreenLink::Side side, double start, double end, const QString& except) const
+{
+    for (const ScreenLink& link : m_Links) {
+        if (!sameName(link.source, m_ServerName) || link.side != side || sameName(link.target, except))
+            continue;
+        if (start < link.sourceEnd && link.sourceStart < end)
+            return link.target;
+    }
+    return QString();
+}
+
+bool ServerConfig::place(const QString& name, const ScreenLink& placement, QString* blockedBy)
+{
+    const QString other = stretchLeadsTo(placement.side, placement.sourceStart, placement.sourceEnd, name);
+    if (!other.isEmpty()) {
+        if (blockedBy != nullptr)
+            *blockedBy = other;
+        return false;
+    }
+
+    // the names as the configuration has them
+    QString server = m_ServerName;
+    QString client = name;
+    for (const Screen& screen : m_Screens) {
+        if (sameName(screen.name(), m_ServerName))
+            server = screen.name();
+        if (sameName(screen.name(), name))
+            client = screen.name();
+    }
+    if (!hasScreen(name))
+        m_Screens.push_back(Screen(name));
+
+    unplace(client);
+    ScreenLink link = placement;
+    link.source = server;
+    link.target = client;
+    m_Links.push_back(link);
+    m_Links.push_back(link.reversed());
+    return true;
+}
+
+void ServerConfig::unplace(const QString& name)
+{
+    m_Links.erase(std::remove_if(m_Links.begin(), m_Links.end(), [&](const ScreenLink& link) {
+                      return (sameName(link.source, m_ServerName) && sameName(link.target, name)) ||
+                             (sameName(link.source, name) && sameName(link.target, m_ServerName));
+                  }),
+                  m_Links.end());
+}
+
 bool ServerConfig::addScreenBeside(const QString& name, ScreenLink::Side side)
 {
     m_Screens.push_back(Screen(name));

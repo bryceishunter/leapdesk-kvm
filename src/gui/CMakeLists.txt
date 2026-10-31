@@ -12,6 +12,7 @@ set (CMAKE_INCLUDE_CURRENT_DIR ON)
 set(GUI_COMMON_SOURCE_FILES
     src/Action.cpp
     src/ConnectionStatus.cpp
+    src/DesktopGeometry.cpp
     src/Hotkey.cpp
     src/KeySequence.cpp
     src/Pairing.cpp
@@ -21,6 +22,7 @@ set(GUI_COMMON_SOURCE_FILES
 set(GUI_COMMON_HEADER_FILES
     src/Action.h
     src/ConnectionStatus.h
+    src/DesktopGeometry.h
     src/Hotkey.h
     src/KeySequence.h
     src/Pairing.h
@@ -50,10 +52,9 @@ set(GUI_SOURCE_FILES
     src/QInputLeapApplication.cpp
     src/QUtility.cpp
     src/Screen.cpp
-    src/ScreenLayoutView.cpp
     src/ScreenSettingsDialog.cpp
     src/ServerConfig.cpp
-    src/ServerConfigDialog.cpp
+    src/ScreensSection.cpp
     src/ServerSections.cpp
     src/SettingsDialog.cpp
     src/SetupWizard.cpp
@@ -85,10 +86,9 @@ set(GUI_HEADER_FILES
     src/QInputLeapApplication.h
     src/QUtility.h
     src/Screen.h
-    src/ScreenLayoutView.h
     src/ScreenLink.h
     src/ScreenSettingsDialog.h
-    src/ServerConfigDialog.h
+    src/ScreensSection.h
     src/ServerConfig.h
     src/ServerSections.h
     src/SettingsDialog.h
@@ -131,7 +131,6 @@ set(GUI_UI_FILES
     src/LogWindow.ui
     src/MainWindow.ui
     src/ScreenSettingsDialog.ui
-    src/ServerConfigDialog.ui
     src/SettingsDialog.ui
     src/SetupWizard.ui
 )
@@ -285,6 +284,7 @@ endif()
 if(INPUTLEAP_BUILD_TESTS)
     set(GUI_TEST_SOURCE_FILES
         test/ConnectionStatusTests.cpp
+        test/DesktopGeometryTests.cpp
         test/KeySequenceTests.cpp
         test/HotkeyTests.cpp
         test/HotkeyParsingTests.cpp

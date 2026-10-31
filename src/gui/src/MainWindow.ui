@@ -388,63 +388,7 @@
          </widget>
         </item>
         <item>
-         <widget class="QWidget" name="m_pSectionScreens" native="true">
-          <layout class="QVBoxLayout" name="m_pLayoutScreens">
-           <property name="spacing">
-            <number>6</number>
-           </property>
-           <property name="leftMargin">
-            <number>0</number>
-           </property>
-           <property name="topMargin">
-            <number>0</number>
-           </property>
-           <property name="rightMargin">
-            <number>0</number>
-           </property>
-           <property name="bottomMargin">
-            <number>0</number>
-           </property>
-           <item>
-            <layout class="QHBoxLayout" name="m_pLayoutScreensHead">
-             <item>
-              <widget class="QLabel" name="m_pLabelScreensTitle">
-               <property name="text">
-                <string>Screens</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <spacer name="spacer_screensHead">
-               <property name="orientation">
-                <enum>Qt::Horizontal</enum>
-               </property>
-              </spacer>
-             </item>
-             <item>
-              <widget class="QPushButton" name="m_pButtonConfigureServer">
-               <property name="text">
-                <string>&amp;Edit Layout...</string>
-               </property>
-              </widget>
-             </item>
-            </layout>
-           </item>
-           <item>
-            <widget class="QLabel" name="m_pLabelLayout">
-             <property name="text">
-              <string notr="true"/>
-             </property>
-             <property name="textFormat">
-              <enum>Qt::PlainText</enum>
-             </property>
-             <property name="wordWrap">
-              <bool>true</bool>
-             </property>
-            </widget>
-           </item>
-          </layout>
-         </widget>
+         <widget class="ScreensSection" name="m_pSectionScreens" native="true"/>
         </item>
         <item>
          <widget class="QFrame" name="m_pLineConnection">
@@ -691,6 +635,12 @@
    <class>StatusDot</class>
    <extends>QWidget</extends>
    <header>WindowParts.h</header>
+  </customwidget>
+  <customwidget>
+   <class>ScreensSection</class>
+   <extends>QWidget</extends>
+   <header>ScreensSection.h</header>
+   <container>1</container>
   </customwidget>
   <customwidget>
    <class>HotkeysSection</class>

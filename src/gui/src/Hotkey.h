@@ -28,7 +28,6 @@
 #include <vector>
 
 class HotkeyDialog;
-class ServerConfigDialog;
 class QSettings;
 
 class Hotkey

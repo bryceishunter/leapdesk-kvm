@@ -22,7 +22,7 @@
 #include "ui_MainWindow.h"
 
 #include "AboutDialog.h"
-#include "ServerConfigDialog.h"
+#include "ScreensSection.h"
 #include "SettingsDialog.h"
 #ifdef INPUTLEAP_GUI_ZEROCONF
 #include "ZeroconfService.h"
@@ -152,6 +152,17 @@ DWORD control_leapdesk_service(bool start)
     return error;
 }
 
+BOOL CALLBACK add_monitor(HMONITOR monitor, HDC, LPRECT, LPARAM data)
+{
+    MONITORINFO info = {};
+    info.cbSize = sizeof(info);
+    if (GetMonitorInfoW(monitor, &info)) {
+        const RECT& r = info.rcMonitor;
+        reinterpret_cast<QList<QRect>*>(data)->append(QRect(r.left, r.top, r.right - r.left, r.bottom - r.top));
+    }
+    return TRUE;
+}
+
 // The Leapdesk service's state, such as SERVICE_RUNNING, or 0 if it can't be read
 DWORD leapdesk_service_state()
 {
@@ -171,6 +182,23 @@ DWORD leapdesk_service_state()
     return state;
 }
 #endif
+
+// the monitors, in the pixels the server measures its desktop in
+QList<QRect> desktopMonitors()
+{
+    QList<QRect> monitors;
+#if defined(Q_OS_WIN)
+    // physical pixels, since the window is aware of each monitor's scaling
+    EnumDisplayMonitors(nullptr, nullptr, add_monitor, reinterpret_cast<LPARAM>(&monitors));
+#else
+    for (const QScreen* screen : QGuiApplication::screens()) {
+        const QRect geometry = screen->geometry();
+        const qreal ratio = screen->devicePixelRatio();
+        monitors << QRect(geometry.topLeft() * ratio, geometry.size() * ratio);
+    }
+#endif
+    return monitors;
+}
 
 } // namespace
 
@@ -211,7 +239,6 @@ MainWindow::MainWindow(QSettings& settings, AppConfig& appConfig) :
     ui_->m_pScrollArea->viewport()->setAutoFillBackground(false);
     ui_->m_pScrollContents->setAutoFillBackground(false);
     makeSectionTitle(ui_->m_pLabelThisTitle);
-    makeSectionTitle(ui_->m_pLabelScreensTitle);
     makeSectionTitle(ui_->m_pLabelConnectionTitle);
     QFont status_font = ui_->m_pStatusTitle->font();
     status_font.setWeight(QFont::DemiBold);
@@ -229,11 +256,37 @@ MainWindow::MainWindow(QSettings& settings, AppConfig& appConfig) :
     connection_layout->setContentsMargins(0, 0, 0, 0);
     connection_layout->setSpacing(10);
 
-    // the hotkeys and options are saved as they're changed, once a run of changes stops
+    // the layout, hotkeys and options are saved as they're changed, once a run of changes stops
+    ui_->m_pSectionScreens->setConfig(&m_ServerConfig);
     ui_->m_pSectionHotkeys->setConfig(&m_ServerConfig);
     ui_->m_pSectionOptions->setConfig(&m_ServerConfig);
+    connect(ui_->m_pSectionScreens, &ScreensSection::changed, this, &MainWindow::saveLayoutSoon);
     connect(ui_->m_pSectionHotkeys, &HotkeysSection::changed, this, &MainWindow::saveLayoutSoon);
     connect(ui_->m_pSectionOptions, &ServerOptionsSection::changed, this, &MainWindow::saveLayoutSoon);
+    connect(ui_->m_pSectionScreens, &ScreensSection::unpairRequested, this, [this](const QString& name) {
+        for (const PairedComputer& computer : pairedComputers()) {
+            if (computer.name.compare(name, Qt::CaseInsensitive) == 0) {
+                unpair(computer.fingerprint, computer.name, computer.label);
+                return;
+            }
+        }
+    });
+
+    // the monitors as the server sees them, again whenever they change
+    updateMonitors();
+    auto watch = [this](QScreen* screen) {
+        connect(screen, &QScreen::geometryChanged, this, &MainWindow::updateMonitors);
+    };
+    for (QScreen* screen : QGuiApplication::screens())
+        watch(screen);
+    connect(qApp, &QGuiApplication::screenAdded, this, [this, watch](QScreen* screen) {
+        watch(screen);
+        updateMonitors();
+    });
+    connect(qApp, &QGuiApplication::screenRemoved, this, [this]() {
+        // once it's gone from the system's list too
+        QTimer::singleShot(0, this, &MainWindow::updateMonitors);
+    });
     m_SaveTimer.setSingleShot(true);
     m_SaveTimer.setInterval(500);
     connect(&m_SaveTimer, &QTimer::timeout, this, &MainWindow::saveLayoutNow);
@@ -781,8 +834,7 @@ void MainWindow::loadServerConfig()
         m_ServerConfig.reset();
     }
 
-    ui_->m_pSectionHotkeys->refresh();
-    ui_->m_pSectionOptions->refresh();
+    refreshServerSections();
 }
 
 bool MainWindow::saveServerConfig()
@@ -918,6 +970,7 @@ void MainWindow::updateFromLogLine(const QString &line)
     if (m_Connection.update(line)) {
         updateStatus();
         updateConnection();
+        updateScreens();
     }
 }
 
@@ -1402,6 +1455,7 @@ void MainWindow::set_connection_state(AppConnectionState state)
         m_Connection.reset();
     updateStatus();
     updateConnection();
+    updateScreens();
 }
 
 void MainWindow::setVisible(bool visible)
@@ -1510,7 +1564,7 @@ void MainWindow::changeEvent(QEvent* event)
         {
             // the layout file may have been edited elsewhere meanwhile
             if (isActiveWindow() && hasShownRole() && shownRole() == AppRole::Server && reloadServerConfigQuietly()) {
-                updateLayoutSummary();
+                updateScreens();
                 updateConnection();
             }
             break;
@@ -1692,16 +1746,14 @@ void MainWindow::autoAddScreen(const QString name)
         if (r != kAutoAddScreenOk) {
             switch (r) {
             case kAutoAddScreenManualServer:
-                showConfigureServer(
-                    tr("Please add the server (%1) to the screens.")
-                        .arg(appConfig().screenName()));
+                showScreens(tr("Please add the server (%1) to the screens.")
+                                .arg(appConfig().screenName()));
                 break;
 
             case kAutoAddScreenManualClient:
-                showConfigureServer(
-                    tr("The new client screen (%1) was added; link it to the other "
-                        "screens to reach it.")
-                        .arg(name));
+                showScreens(tr("The new client screen (%1) was added; drag it to a monitor edge to reach it.")
+                                .arg(name),
+                            name);
                 break;
             default:
                 break;
@@ -1729,31 +1781,23 @@ bool MainWindow::reloadEditedServerConfig()
             return false;
         }
         m_ServerConfigError.clear();
-        ui_->m_pSectionHotkeys->refresh();
-        ui_->m_pSectionOptions->refresh();
+        refreshServerSections();
     }
     return true;
 }
 
-void MainWindow::showConfigureServer(const QString& message)
+void MainWindow::showScreens(const QString& message, const QString& select)
 {
-    QString fileName = ui_->m_pLineEditConfigFile->text();
-    if (!reloadEditedServerConfig())
-        return;
-
-    ServerConfigDialog dlg(this, serverConfig(), getScreenName());
-    dlg.message(message);
-    if (dlg.exec() == QDialog::Accepted && saveServerConfig() && m_ExpectedRunningState == kStarted)
-        appendLogInfo(tr("saved %1; the running server applies it within a few seconds").arg(fileName));
-    ui_->m_pSectionHotkeys->refresh();
-    ui_->m_pSectionOptions->refresh();
-    updateLayoutSummary();
-    updateConnection();
-}
-
-void MainWindow::on_m_pButtonConfigureServer_clicked()
-{
-    showConfigureServer();
+    // the screens are laid out in the window itself
+    if (!isVisible())
+        showNormal();
+    activateWindow();
+    updateScreens();
+    if (!select.isEmpty())
+        ui_->m_pSectionScreens->select(select);
+    ui_->m_pScrollArea->ensureWidgetVisible(ui_->m_pSectionScreens, 0, 0);
+    if (!message.isEmpty())
+        setStatus(message);
 }
 
 void MainWindow::on_m_pButtonReload_clicked()
@@ -1842,12 +1886,13 @@ void MainWindow::pair(pairing::Protocol::Role role)
         linked = m_ServerConfig.addScreenBeside(peer, dialog.side());
     if (!saveServerConfig())
         return;
-    updateLayoutSummary();
+    updateScreens();
     updateConnection();
     if (!linked) {
-        showConfigureServer(tr("%1 was added, but the %2 edge of this screen already leads to another "
-                               "screen. Link %1 to the other screens to reach it.")
-                                .arg(peer, ScreenLink::sideLabel(dialog.side())));
+        showScreens(tr("%1 was added, but the %2 edge of this screen already leads to another "
+                       "screen. Drag %1 to a free edge to reach it.")
+                        .arg(peer, ScreenLink::sideLabel(dialog.side())),
+                    peer);
     }
 }
 
@@ -1957,7 +2002,7 @@ void MainWindow::unpair(const inputleap::FingerprintData& fingerprint, const QSt
         m_ServerConfig.setServerName(getScreenName());
         if (m_ServerConfig.takeOffLayout(name))
             saveServerConfig();
-        updateLayoutSummary();
+        updateScreens();
         updateConnection();
     }
 }
@@ -2079,7 +2124,7 @@ void MainWindow::updateSections()
     ui_->m_pActionSave->setVisible(server);
 
     if (server)
-        updateLayoutSummary();
+        updateScreens();
     updatePairedComputers();
     updateStatus();
 }
@@ -2537,8 +2582,7 @@ bool MainWindow::reloadServerConfigQuietly()
         return false;
     if (!m_ServerConfig.load(fileName, &m_ServerConfigError))
         return false;
-    ui_->m_pSectionHotkeys->refresh();
-    ui_->m_pSectionOptions->refresh();
+    refreshServerSections();
     return true;
 }
 
@@ -2553,38 +2597,46 @@ void MainWindow::saveLayoutNow()
     if (!saveServerConfig())
         return;
     setStatus(isRunning() ? tr("Saved. The server uses the change within a few seconds.") : tr("Saved."));
-    updateLayoutSummary();
+    updateScreens();
     updateConnection();
 }
 
-void MainWindow::updateLayoutSummary()
+void MainWindow::refreshServerSections()
 {
+    ui_->m_pSectionScreens->refresh();
+    ui_->m_pSectionHotkeys->refresh();
+    ui_->m_pSectionOptions->refresh();
+}
+
+void MainWindow::updateScreens()
+{
+    if (!hasShownRole() || shownRole() != AppRole::Server)
+        return;
     reloadServerConfigQuietly();
 
-    const QString self = getScreenName();
-    QStringList lines;
-    for (const Screen& screen : std::as_const(m_ServerConfig).screens()) {
-        if (screen.name().compare(self, Qt::CaseInsensitive) == 0)
-            continue;
-        QStringList ways;
-        for (const ScreenLink& link : std::as_const(m_ServerConfig).links()) {
-            if (link.source.compare(self, Qt::CaseInsensitive) != 0 ||
-                link.target.compare(screen.name(), Qt::CaseInsensitive) != 0)
-                continue;
-            ways << (link.coversWholeSourceEdge()
-                         ? tr("the %1 edge").arg(ScreenLink::sideLabel(link.side))
-                         : tr("the %1 edge from %2 % to %3 %").arg(ScreenLink::sideLabel(link.side),
-                                                                   QString::number(link.sourceStart),
-                                                                   QString::number(link.sourceEnd)));
-        }
-        lines << (ways.isEmpty()
-                      ? tr("%1 isn't reached from this computer's screen yet.").arg(screen.name())
-                      : tr("%1 is reached through %2 of this computer's screen.")
-                            .arg(screen.name(), QLocale().createSeparatedList(ways)));
+    // the computers paired with, by the names they gave, and whether each is connected
+    QStringList paired;
+    for (const PairedComputer& computer : pairedComputers()) {
+        if (!computer.name.isEmpty())
+            paired << computer.name;
     }
-    if (lines.isEmpty())
-        lines << tr("No other screens yet. Pairing a computer adds it here.");
-    ui_->m_pLabelLayout->setText(lines.join('\n'));
+    QStringList names = paired;
+    for (const Screen& screen : std::as_const(m_ServerConfig).screens())
+        names << screen.name();
+    QMap<QString, QString> status;
+    for (const QString& name : std::as_const(names)) {
+        if (isRunning() && m_Connection.isConnected(name))
+            status.insert(name, tr("Connected"));
+        else if (isRunning() && m_Connection.knowsClients())
+            status.insert(name, tr("Not connected"));
+    }
+    ui_->m_pSectionScreens->setComputers(paired, status);
+    ui_->m_pSectionScreens->refresh();
+}
+
+void MainWindow::updateMonitors()
+{
+    ui_->m_pSectionScreens->setMonitors(desktopMonitors());
 }
 
 void MainWindow::connectionLinkActivated(const QString& link)

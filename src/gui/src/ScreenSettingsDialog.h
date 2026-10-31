@@ -35,7 +35,7 @@ class ScreenSettingsDialog : public QDialog
     Q_OBJECT
 
     public:
-        ScreenSettingsDialog(QWidget* parent, Screen* pScreen = nullptr);
+        ScreenSettingsDialog(QWidget* parent, Screen* pScreen = nullptr, bool canRename = true);
         ~ScreenSettingsDialog() override;
 
     public slots:
