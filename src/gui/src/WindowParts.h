@@ -154,3 +154,24 @@ private:
     QString m_Description;
     bool m_Hovered = false;
 };
+
+// Keeps the mouse wheel for scrolling the page. A list or number box in it would otherwise
+// change as the page scrolls it under the pointer, even from the little a touchpad sends, and
+// take the focus too; one such list places a computer on another edge. Each still changes by
+// clicking it or from the keyboard.
+class ScrollWheelGuard : public QObject
+{
+    Q_OBJECT
+
+public:
+    // guards every list and number box in page, those made later included
+    explicit ScrollWheelGuard(QWidget* page);
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
+private:
+    bool guards(QWidget* widget) const;
+
+    QWidget* m_Page;
+};

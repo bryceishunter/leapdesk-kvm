@@ -17,6 +17,9 @@
 
 #include "WindowParts.h"
 
+#include <QAbstractSpinBox>
+#include <QApplication>
+#include <QComboBox>
 #include <QEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -428,4 +431,50 @@ void RoleCard::paintEvent(QPaintEvent*)
     painter.setPen(isEnabled() ? mutedTextColor(pal) : text);
     painter.drawText(QRect(area.left(), area.top() + title + 2, area.width(), area.height() - title - 2),
                      Qt::TextWordWrap | Qt::AlignLeft | Qt::AlignTop, m_Description);
+}
+
+ScrollWheelGuard::ScrollWheelGuard(QWidget* page) :
+    QObject(page),
+    m_Page(page)
+{
+    // the sections make their boxes again as they change, so it watches from the application
+    qApp->installEventFilter(this);
+    for (QWidget* widget : page->findChildren<QWidget*>()) {
+        if (guards(widget))
+            widget->setFocusPolicy(Qt::StrongFocus);
+    }
+}
+
+bool ScrollWheelGuard::guards(QWidget* widget) const
+{
+    return (qobject_cast<QComboBox*>(widget) != nullptr || qobject_cast<QAbstractSpinBox*>(widget) != nullptr) &&
+           m_Page->isAncestorOf(widget);
+}
+
+bool ScrollWheelGuard::eventFilter(QObject* watched, QEvent* event)
+{
+    if (event->type() != QEvent::Polish && event->type() != QEvent::Wheel)
+        return false;
+    auto* widget = qobject_cast<QWidget*>(watched);
+    if (widget == nullptr)
+        return false;
+
+    if (event->type() == QEvent::Polish) {
+        // so that the wheel doesn't give it the focus on its way past
+        if (guards(widget))
+            widget->setFocusPolicy(Qt::StrongFocus);
+        return false;
+    }
+
+    // a box's own parts, such as a number box's text, and not a list's popup, a window of its own
+    for (QWidget* w = widget; w != nullptr && w != m_Page; w = w->parentWidget()) {
+        if (guards(w)) {
+            // ignored, it goes on to the widgets around the box, and so to the page, which scrolls
+            event->ignore();
+            return true;
+        }
+        if (w->isWindow())
+            break;
+    }
+    return false;
 }

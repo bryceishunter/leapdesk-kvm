@@ -238,6 +238,8 @@ MainWindow::MainWindow(QSettings& settings, AppConfig& appConfig) :
     // the sections read as one page in the window's own colour
     ui_->m_pScrollArea->viewport()->setAutoFillBackground(false);
     ui_->m_pScrollContents->setAutoFillBackground(false);
+    // scrolling it never changes a setting, or the layout, on the way past
+    new ScrollWheelGuard(ui_->m_pScrollArea);
     makeSectionTitle(ui_->m_pLabelThisTitle);
     makeSectionTitle(ui_->m_pLabelConnectionTitle);
     QFont status_font = ui_->m_pStatusTitle->font();
