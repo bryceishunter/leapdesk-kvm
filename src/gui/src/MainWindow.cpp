@@ -842,9 +842,17 @@ bool MainWindow::saveServerConfig()
     QString fileName = ui_->m_pLineEditConfigFile->text();
     QString error;
     if (!m_ServerConfig.save(fileName, &error)) {
+        // an edit that can't be saved would stop every later one too, such as adding a computer
+        // after pairing, so the window goes back to what the file holds
+        const bool reverted = QFile::exists(fileName) && m_ServerConfig.load(fileName, nullptr);
         QMessageBox::warning(this, tr("Could not save the configuration"),
                              tr("The server configuration could not be written to %1:\n\n%2")
-                                 .arg(fileName, error));
+                                 .arg(fileName, error) +
+                                 (reverted ? tr("\n\nThe window shows the layout and settings as they were "
+                                                "saved last.")
+                                           : QString()));
+        if (reverted)
+            refreshServerSections();
         return false;
     }
     m_ServerConfigError.clear();
@@ -2146,7 +2154,11 @@ void MainWindow::updateStatus()
     } else if (server) {
         title = tr("Running as server");
         const QStringList& clients = m_Connection.connectedClients();
-        if (m_Connection.unpairedAttempt()) {
+        if (!m_Connection.unplacedClient().isEmpty()) {
+            tone = Tone::Warn;
+            detail = tr("%1 is paired, but it can't connect until it's in the layout. Drag it to an edge "
+                        "under Screens.").arg(m_Connection.unplacedClient());
+        } else if (m_Connection.unpairedAttempt()) {
             tone = Tone::Warn;
             detail = tr("A computer that isn't paired tried to connect. To let it in, press Pair a Computer "
                         "here, and Pair with Server on that computer.");
@@ -2182,8 +2194,9 @@ void MainWindow::updateStatus()
             break;
         case ConnectionStatus::Client::NameRefused:
             tone = Tone::Bad;
-            title = tr("The server doesn't know this computer");
-            detail = tr("%1 has no screen called %2. Pair with it again.").arg(server_name, getScreenName());
+            title = tr("Not in the server's layout");
+            detail = tr("%1 trusts this computer, but has no screen called %2. Place it under Screens in "
+                        "the Leapdesk KVM window on %1.").arg(server_name, getScreenName());
             break;
         case ConnectionStatus::Client::NameTaken:
             tone = Tone::Bad;
@@ -2536,7 +2549,8 @@ void MainWindow::updateConnection()
             addCheck(Tone::Bad, on_server, failureText().toHtmlEscaped());
             break;
         case ConnectionStatus::Client::NameRefused:
-            addCheck(Tone::Bad, on_server, tr("%1 has no screen called %2. Pair with it again.")
+            addCheck(Tone::Bad, on_server, tr("%1 trusts this computer, but has no screen called %2. Place it "
+                                              "under Screens in the Leapdesk KVM window on %1.")
                                                .arg(server_name, getScreenName().toHtmlEscaped()));
             break;
         case ConnectionStatus::Client::NameTaken:

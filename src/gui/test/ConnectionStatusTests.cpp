@@ -84,6 +84,31 @@ TEST(ConnectionStatusTests, aServerNoticesAComputerItIsntPairedWith)
     EXPECT_FALSE(status.unpairedAttempt());
 }
 
+TEST(ConnectionStatusTests, aServerNoticesAPairedComputerThatIsntInTheLayout)
+{
+    auto status = after({
+        "NOTE: client \"surfacestudio\" has connected",
+        "NOTE: client \"SURFACESTUDIO\" unpaired this computer",
+        "NOTE: disconnecting client \"surfacestudio\"",
+        "NOTE: client \"SURFACESTUDIO\" has disconnected",
+        "NOTE: Fingerprint matches trusted fingerprint",
+        "NOTE: accepted client connection",
+        "WARNING: unrecognised client name \"SURFACESTUDIO\", check server config",
+        "NOTE: disconnecting client \"SURFACESTUDIO\"",
+        "NOTE: client \"SURFACESTUDIO\" has disconnected",
+    });
+    EXPECT_EQ(status.unplacedClient(), "SURFACESTUDIO");
+    EXPECT_FALSE(status.isConnected("surfacestudio"));
+
+    status.update("NOTE: reloaded configuration");
+    EXPECT_TRUE(status.unplacedClient().isEmpty());
+
+    status.update("WARNING: unrecognised client name \"SURFACESTUDIO\", check server config");
+    status.update("NOTE: client \"surfacestudio\" has connected");
+    EXPECT_TRUE(status.unplacedClient().isEmpty());
+    EXPECT_TRUE(status.isConnected("SURFACESTUDIO"));
+}
+
 TEST(ConnectionStatusTests, aClientConnects)
 {
     auto status = after({

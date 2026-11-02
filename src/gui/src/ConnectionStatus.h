@@ -50,6 +50,9 @@ public:
     // as a server: a computer this one isn't paired with tried to connect, since the last
     // client that is paired connected
     bool unpairedAttempt() const { return m_UnpairedAttempt; }
+    // as a server: a computer that tried to connect but has no screen in the layout, until it
+    // connects or the layout is read again
+    QString unplacedClient() const { return m_UnplacedClient; }
 
     // as a client
     Client client() const { return m_Client; }
@@ -59,6 +62,7 @@ private:
     bool m_KnowsClients = false;
     QStringList m_Clients;
     bool m_UnpairedAttempt = false;
+    QString m_UnplacedClient;
     Client m_Client = Client::Unknown;
     QString m_Failure;
     // why this attempt to connect was turned down, which the failure that follows doesn't say

@@ -39,6 +39,7 @@ bool ConnectionStatus::update(const QString& line)
     const bool old_knows = m_KnowsClients;
     const QStringList old_clients = m_Clients;
     const bool old_attempt = m_UnpairedAttempt;
+    const QString old_unplaced = m_UnplacedClient;
     const Client old_client = m_Client;
     const QString old_failure = m_Failure;
 
@@ -47,11 +48,20 @@ bool ConnectionStatus::update(const QString& line)
         m_KnowsClients = true;
         m_Clients.clear();
         m_UnpairedAttempt = false;
+        m_UnplacedClient.clear();
     } else if (line.contains(QLatin1String("\" has connected"))) {
         const QString name = quotedName(line, QStringLiteral("client \""));
         if (!name.isEmpty() && !isConnected(name))
             m_Clients.append(name);
         m_UnpairedAttempt = false;
+        if (name.compare(m_UnplacedClient, Qt::CaseInsensitive) == 0)
+            m_UnplacedClient.clear();
+    } else if (line.contains(QLatin1String("unrecognised client name \""))) {
+        // it got past the certificates, so it's paired, but the layout has no screen for it
+        m_UnplacedClient = quotedName(line, QStringLiteral("client name \""));
+    } else if (line.contains(QLatin1String("reloaded configuration"))) {
+        // the next attempt says whether the layout has it now
+        m_UnplacedClient.clear();
     } else if (line.contains(QLatin1String("\" has disconnected")) || line.contains(QLatin1String("\" is dead")) ||
                line.contains(QLatin1String("\" was unpaired")) || line.contains(QLatin1String("disconnecting client \"")) ||
                line.contains(QLatin1String("forced disconnection of client \""))) {
@@ -96,7 +106,7 @@ bool ConnectionStatus::update(const QString& line)
     }
 
     return m_KnowsClients != old_knows || m_Clients != old_clients || m_UnpairedAttempt != old_attempt ||
-           m_Client != old_client || m_Failure != old_failure;
+           m_UnplacedClient != old_unplaced || m_Client != old_client || m_Failure != old_failure;
 }
 
 void ConnectionStatus::reset()
