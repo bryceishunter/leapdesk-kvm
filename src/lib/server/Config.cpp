@@ -1369,8 +1369,7 @@ std::string Config::getOptionValue(OptionID id, OptionValue value)
 		id == kOptionRelativeMouseMoves ||
 		id == kOptionWin32KeepForeground ||
 		id == kOptionScreenPreserveFocus ||
-		id == kOptionClipboardSharing ||
-		id == kOptionClipboardSharingSize) {
+		id == kOptionClipboardSharing) {
 		return (value != 0) ? "true" : "false";
 	}
 	if (id == kOptionModifierMapForShift ||
@@ -1405,7 +1404,8 @@ std::string Config::getOptionValue(OptionID id, OptionValue value)
 	if (id == kOptionHeartbeat ||
 		id == kOptionScreenSwitchCornerSize ||
 		id == kOptionScreenSwitchDelay ||
-		id == kOptionScreenSwitchTwoTap) {
+		id == kOptionScreenSwitchTwoTap ||
+		id == kOptionClipboardSharingSize) {
 		return inputleap::string::sprintf("%d", value);
 	}
 	if (id == kOptionScreenSwitchCorners) {

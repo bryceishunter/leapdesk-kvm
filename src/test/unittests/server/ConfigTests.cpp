@@ -87,6 +87,20 @@ TEST(ConfigTests, addOption_existingOption_replacesItsValue)
     EXPECT_EQ(config.getOptions("")->at(kOptionClipboardSharing), 0);
 }
 
+TEST(ConfigTests, readWrite_clipboardSharingSize_keepsTheNumber)
+{
+    Config original = read_config(std::string(kPartialEdgeConfig) +
+                                  "section: options\n"
+                                  "    clipboardSharing = true\n"
+                                  "    clipboardSharingSize = 97000000\n"
+                                  "end\n");
+
+    std::string text = write_config(original);
+
+    EXPECT_NE(text.find("clipboardSharingSize = 97000000"), std::string::npos) << text;
+    EXPECT_EQ(original, read_config(text));
+}
+
 TEST(ConfigTests, removeScreen_withOtherScreens_removesItAndItsLinks)
 {
     Config config = read_config(kPartialEdgeConfig);

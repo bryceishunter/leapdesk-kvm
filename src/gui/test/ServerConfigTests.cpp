@@ -60,6 +60,7 @@ public:
     using ServerConfig::links;
     using ServerConfig::hotkeys;
     using ServerConfig::setClipboardSharing;
+    using ServerConfig::setClipboardSharingSize;
     using ServerConfig::renameScreen;
     using ServerConfig::removeScreen;
 };
@@ -190,6 +191,19 @@ TEST_F(ServerConfigTests, save_changedOption_changesOnlyThatOption)
     EXPECT_TRUE(text.contains("clipboardSharing = false")) << text.toStdString();
     inputleap::Config expected = serverView(kPartialEdgeLayout);
     expected.addOption("", kOptionClipboardSharing, 0);
+    EXPECT_EQ(serverView(text), expected) << text.toStdString();
+}
+
+TEST_F(ServerConfigTests, save_changedClipboardSize_writesTheNumber)
+{
+    TestServerConfig config = loaded(kPartialEdgeLayout);
+    config.setClipboardSharingSize(97 * 1000 * 1000);
+
+    QString text = saved(config);
+
+    EXPECT_TRUE(text.contains("clipboardSharingSize = 97000000")) << text.toStdString();
+    inputleap::Config expected = serverView(kPartialEdgeLayout);
+    expected.addOption("", kOptionClipboardSharingSize, 97 * 1000 * 1000);
     EXPECT_EQ(serverView(text), expected) << text.toStdString();
 }
 
