@@ -17,6 +17,7 @@
 
 #include "io/FileChangeWatch.h"
 
+#include <chrono>
 #include <system_error>
 
 namespace inputleap {
@@ -37,7 +38,9 @@ std::string file_stamp(const fs::path& path)
     if (error) {
         return kMissing;
     }
-    return std::to_string(size) + ":" + std::to_string(time.time_since_epoch().count());
+    // libc++ counts file times in __int128, which std::to_string doesn't take
+    const auto ticks = std::chrono::duration_cast<std::chrono::nanoseconds>(time.time_since_epoch()).count();
+    return std::to_string(size) + ":" + std::to_string(static_cast<long long>(ticks));
 }
 
 } // namespace
