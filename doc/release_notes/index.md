@@ -3,6 +3,132 @@ Release notes
 
 [comment]: <> (towncrier release notes start)
 
+Leapdesk KVM `3.1.0` ( `2026-11-03` )
+================================
+
+========================================================================
+
+Bug fixes
+---------
+
+- Fix the maximum clipboard size being written to the configuration file as "true",
+  which the server then couldn't read. Changing the size in the window failed to save, and
+  so did every change after it, including adding a computer after pairing.
+- Fix configuration links written with their edge ranges rounded to whole
+  percents, removing a screen from a configuration hanging, and options that were
+  already set not taking a new value.
+- Fix bug where UI names and '.ui' paths in language files are incorrect and not displaying correctly.
+- Fix Leapdesk server inputs stuck when EIS reconnect to client after invalid EIS protocol.
+- Windows: suspending and resuming the server no longer leaves it running without listening
+  for clients, or unable to switch to a client because its mouse and keyboard hooks had
+  gone. Clients are told again when the server closes their connection, so stopping or
+  suspending the server doesn't wait out a timeout first.
+- Windows: the service recognises its own server and client processes again, so a copy left
+  running is shut down instead of competing with the one the service starts.
+- Windows: the cursor stays hidden on a client the mouse has left, even when another
+  application takes the mouse capture there or the desktop switches.
+
+Features
+--------
+
+- Two fewer packets per input message: the client no longer answers every message with a
+  no-op, and each message goes out in one write instead of two. This shows most on a
+  high-latency link such as a VPN. The bytes on the wire are unchanged, so older builds
+  still connect.
+- Files copied in Explorer on one Windows screen can be pasted on another. They
+  are sent with Taildrop when you paste, so both machines need Tailscale; the
+  application you paste into waits until they have arrived, and a window shows
+  how the transfer is going, with a button to cancel it. This adds protocol
+  version 1.7. Older clients and servers still connect, but can't take part.
+- The window edits the server's configuration file itself instead of a copy kept in its
+  own settings, and keeps everything in the file it doesn't edit as it was, hotkeys it can't
+  show included.
+- The server's layout is set up in the window. Its Screens section draws this computer's
+  monitors as Windows arranges them, marks the edges where the pointer can leave and where
+  it stops, and shows each paired computer beside the stretch of edge that leads to it.
+  A computer is placed by dragging it onto a monitor's edge, or by choosing the edge from a
+  list, and taken off the layout by dragging it to "Not placed". The exact stretch, and where
+  the pointer enters the other computer, can be set in percent, and a stretch the pointer
+  can't reach is pointed out. Links between other screens are listed, and can be added,
+  edited and removed, and each screen's settings are a button away. The separate Configure
+  Server dialog is gone, and with it renaming screens, since a computer's name is set on it.
+- New Leapdesk KVM icons and logos throughout: the programs, the installers, the
+  settings window, its tray icon and About box, and the macOS and Linux icons.
+  `res/make-icons.py` regenerates them all from the masters in `.assets/`.
+- A Windows installer, `LeapdeskKVM-<version>.exe`, built with
+  `dist/inno/build-installers.ps1`. Every computer gets every program and the Leapdesk KVM
+  window, and runs them as the `Leapdesk` service, which restarts after a crash. It stops
+  and removes earlier Leapdesk and Input Leap services and installs, and moves an Input
+  Leap pairing certificate, trusted fingerprints and configuration over. An upgrade keeps
+  the role, name and server; a new install leaves them for the window to set, or takes
+  `/ROLE`, `/NAME`, `/SERVER` and `/LOGLEVEL` on the command line. The window sets the role,
+  screen name and server address directly, with one administrator approval when applying,
+  lists Tailscale devices to choose the server from, and shows whether the path to the
+  server is direct or relayed.
+- Builds against OpenSSL 3 and 4, and sets TLS 1.2 as the minimum.
+- Computers pair by comparing a code. Pair a Computer on the server and Pair with
+  Server on a client open a window on each that shows the same six-digit code;
+  once the people at both press Pair, each trusts the other's certificate, and the
+  server adds the client to its layout on the side chosen. The running server
+  takes this up by itself, and a client connects again at once; pairing again
+  with a computer already trusted changes nothing. A hash of the server's random nonce is sent
+  before the client's nonce is seen, so someone in between can't steer the two
+  codes to match. The installer lets the window take pairing on TCP port 24802,
+  only over Tailscale where it can. Under the service the window points to pairing
+  where it used to ask about an unknown fingerprint.
+- The server reloads its configuration when the file changes, so edits apply
+  without a restart; a file with an error is logged and the previous
+  configuration stays in use.
+- Computers can be unpaired from either side. The window lists the computers this
+  one is paired with, each with an Unpair button. Unpairing takes effect within a couple
+  of seconds and without a restart: the running server or client notices that the
+  certificate is no longer trusted and drops the connection, and if the other computer
+  is connected it is told over that connection, and forgets this one too. The server also takes the
+  client off its layout. A computer that wasn't connected keeps its entry until it's
+  unpaired there as well, but the two can't connect. Protocol 1.8 adds the message;
+  an older peer is just disconnected.
+- The window is laid out as in the new design. A status line across the top says what's
+  running and whether it's connected, from what the service logs: which clients are
+  connected to the server, or on a client whether it's connected, can't reach the server,
+  isn't paired yet, or uses a name the server doesn't know. Server and Client are two large
+  choices. The Connection section lists the computers this one is paired with, each with its
+  network path, whether it's connected and an Unpair button, and the facts about this
+  computer: where clients connect, its addresses, its certificate and how copy and paste works.
+  On a client it checks the server address, the network path, Leapdesk on the server and
+  pairing, one line each. The window can be resized and scrolls, and follows the system's
+  light or dark colours and accent colour.
+- Hotkeys and the server's options are edited in the window, in sections that open and
+  close, and are saved to the layout file as they're changed, which the running server
+  picks up within a few seconds. Each hotkey is listed with what it does in words, such as
+  "Switch to desk", and is edited with its keys and its actions in one dialog. Rules the
+  window can't edit are listed and kept as they are. Editing a hotkey no longer needs its
+  keys pressed again before OK takes it.
+
+Deprecations and Removals
+-------------------------
+
+- The project is now Leapdesk KVM. The programs are `leapdesk-server`,
+  `leapdesk-client` and `leapdesk-daemon`, the Windows service is `Leapdesk`, and
+  settings live in `%LOCALAPPDATA%\Leapdesk` (`~/.config/Leapdesk` elsewhere) with
+  the certificate as `Leapdesk.pem` and the default config as `leapdesk.sgc`.
+  The Windows installer replaces an Input Leap service and moves its pairing
+  certificate, trusted fingerprints and configuration over; on Linux and macOS the
+  first run copies the certificate and fingerprints from Input Leap's profile. The
+  settings window's own settings start afresh.
+
+Security fixes
+--------------
+
+- The Windows service no longer runs command lines sent to it on 127.0.0.1:24801,
+  where any local program could connect and have a program run with the
+  service's rights. It builds the server or client command itself, with the
+  programs in its own folder, from settings only administrators can change:
+  Role, ScreenName, ServerAddress, LogLevel and ProfileDir in
+  HKLM\SOFTWARE\Leapdesk, which the installer and `leapdesk-daemon.exe /configure`
+  write. A command line saved by an earlier version isn't run, since it may have
+  come over IPC; running the installer again carries its screen name and server
+  over. The settings window starts and stops the service through Windows instead,
+  which the installer lets signed-in users do.
 InputLeap `3.0.3` ( `2025-06-13` )
 ================================
 

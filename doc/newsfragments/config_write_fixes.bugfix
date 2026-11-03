@@ -1,3 +1,0 @@
-Fix configuration links written with their edge ranges rounded to whole
-percents, removing a screen from a configuration hanging, and options that were
-already set not taking a new value.

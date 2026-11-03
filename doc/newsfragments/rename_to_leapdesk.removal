@@ -1,8 +1,0 @@
-The project is now Leapdesk KVM. The programs are `leapdesk-server`,
-`leapdesk-client` and `leapdesk-daemon`, the Windows service is `Leapdesk`, and
-settings live in `%LOCALAPPDATA%\Leapdesk` (`~/.config/Leapdesk` elsewhere) with
-the certificate as `Leapdesk.pem` and the default config as `leapdesk.sgc`.
-The Windows installers replace an Input Leap service and move its pairing
-certificate, trusted fingerprints and configuration over; on Linux and macOS the
-first run copies the certificate and fingerprints from Input Leap's profile. The
-settings window's own settings start afresh.

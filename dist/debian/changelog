@@ -1,3 +1,9 @@
+leapdesk-kvm (3.1.0) UNRELEASED; urgency=medium
+
+  * First release of Leapdesk KVM.
+
+ -- Bryce <8810696+bryceishunter@users.noreply.github.com>  Tue, 03 Nov 2026 00:00:00 +0000
+
 leapdesk-kvm (3.0.2) UNRELEASED; urgency=medium
 
   * New release.

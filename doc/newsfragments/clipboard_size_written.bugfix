@@ -1,3 +1,0 @@
-Fix the maximum clipboard size being written to the configuration file as "true",
-which the server then couldn't read. Changing the size in the window failed to save, and
-so did every change after it, including adding a computer after pairing.
