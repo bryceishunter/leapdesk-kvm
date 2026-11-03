@@ -64,8 +64,9 @@ PrivilegesRequired=admin
 #endif
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-; the Universal C Runtime ships with Windows 10 and later, so only the Visual C++ runtime is bundled
-MinVersion=10.0
+; Windows 10 1809, the oldest Qt 6 runs on. Windows ships the Universal C Runtime and ICU, so only
+; the Visual C++ runtime is bundled
+MinVersion=10.0.17763
 OutputDir={#OutputDir}
 OutputBaseFilename={#OutputName}
 SetupIconFile={#RepoDir}\res\leapdesk.ico
@@ -86,7 +87,9 @@ VersionInfoProductName={#MyAppName}
 
 [Files]
 Source: "{#StagingDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; \
-    Excludes: "api-ms-win-*.dll,ucrtbase.dll,opengl32sw.dll,dxcompiler.dll,dxil.dll"
+    Excludes: "api-ms-win-*.dll,ucrtbase.dll,icuuc.dll,opengl32sw.dll,dxcompiler.dll,dxil.dll"
+Source: "{#RepoDir}\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
+Source: "{#RepoDir}\dist\inno\THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
 #ifdef SeedConfig
 Source: "{#SeedConfig}"; DestName: "seed.sgc"; Flags: dontcopy
 #endif

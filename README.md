@@ -13,8 +13,8 @@ Not affiliated with Synergy, Deskflow, or Tailscale.
 
 ## Status
 
-Small and active. Leapdesk KVM is developed and tested on Windows 10 and 11
-(64-bit), and the Windows installer is the one supported package. The macOS,
+Small and active. Leapdesk KVM is developed and tested on 64-bit Windows, and
+the Windows installer is the one supported package. The macOS,
 Linux and BSD code is inherited from Input Leap and isn't tested here; build it
 from source, and expect rough edges. Reports and patches from those platforms
 are welcome.
@@ -26,8 +26,8 @@ known issues.
 
 ## Install on Windows
 
-Each computer needs 64-bit Windows 10 or 11, and an administrator to approve the
-install. [Tailscale](https://tailscale.com) on every computer is recommended:
+Each computer needs 64-bit Windows 11, or Windows 10 version 1809 or later, and
+an administrator to approve the install. [Tailscale](https://tailscale.com) on every computer is recommended:
 the installer then opens Leapdesk's ports on the Tailscale network only, the
 window can pick the server from your devices, and copied files can be pasted
 across.
