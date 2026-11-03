@@ -33,11 +33,11 @@ var
   Args: TArrayOfString;
 begin
   Client := '"C:\Program Files\Leapdesk\leapdesk-client.exe" -f --no-tray --ipc --debug NOTE ' +
-            '--name surfacestudio --profile-dir "C:\Users\A B\AppData\Local\Leapdesk" ' +
-            '--log "C:\Users\A B\AppData\Local\Leapdesk\client.log" 100.111.152.25:24800';
+            '--name studio --profile-dir "C:\Users\A B\AppData\Local\Leapdesk" ' +
+            '--log "C:\Users\A B\AppData\Local\Leapdesk\client.log" 100.64.0.1:24800';
   Server := '"C:\Program Files\Leapdesk\leapdesk-server.exe" -f --no-tray --ipc --debug NOTE ' +
-            '--name DESKTOP-GP522K1 --profile-dir "C:\Users\A B\AppData\Local\Leapdesk" ' +
-            '-c "D:\dev\leapdesk\deploy\leapdesk.sgc"';
+            '--name DESKTOP-ABC1234 --profile-dir "C:\Users\A B\AppData\Local\Leapdesk" ' +
+            '-c "C:\Users\A B\AppData\Local\Leapdesk\leapdesk.sgc"';
   Legacy := '"C:\Program Files\InputLeap\input-leapc.exe" -f -n studio 10.0.0.2';
   LegacyServer := '"C:\Program Files\InputLeap\input-leaps.exe" -f -n desk -c "C:\x.sgc"';
 
@@ -46,12 +46,12 @@ begin
   CheckEqual('keeps a quoted path whole', Args[0], 'C:\Program Files\Leapdesk\leapdesk-client.exe');
   CheckEqual('keeps a quoted path with a space whole', Args[9], 'C:\Users\A B\AppData\Local\Leapdesk');
 
-  CheckEqual('reads --name', OptionValue(Client, '-n', '--name'), 'surfacestudio');
+  CheckEqual('reads --name', OptionValue(Client, '-n', '--name'), 'studio');
   CheckEqual('reads -n', OptionValue(Legacy, '-n', '--name'), 'studio');
-  CheckEqual('reads -c', OptionValue(Server, '-c', '--config'), 'D:\dev\leapdesk\deploy\leapdesk.sgc');
+  CheckEqual('reads -c', OptionValue(Server, '-c', '--config'), 'C:\Users\A B\AppData\Local\Leapdesk\leapdesk.sgc');
   CheckEqual('a missing option is empty', OptionValue(Client, '-c', '--config'), '');
 
-  CheckEqual('a client command ends with the server', CommandServer(Client), '100.111.152.25:24800');
+  CheckEqual('a client command ends with the server', CommandServer(Client), '100.64.0.1:24800');
   CheckEqual('an Input Leap client command too', CommandServer(Legacy), '10.0.0.2');
   CheckEqual('a server command has no server', CommandServer(Server), '');
 
@@ -65,13 +65,13 @@ begin
   CheckEqual('a client in any case', NormalRole('client'), 'Client');
   CheckEqual('anything else stays as it was', NormalRole('desktop'), 'desktop');
 
-  Check('accepts a host name', IsValidScreenName('DESKTOP-GP522K1'));
+  Check('accepts a host name', IsValidScreenName('DESKTOP-ABC1234'));
   Check('accepts dots and underscores', IsValidScreenName('studio.local_2'));
   Check('rejects spaces', not IsValidScreenName('my pc'));
   Check('rejects an empty name', not IsValidScreenName(''));
 
   CheckEqual('a server needs no address', SettingsProblem('Server', 'desk', ''), '');
-  CheckEqual('a client with an address', SettingsProblem('Client', 'studio', '100.111.152.25:24800'), '');
+  CheckEqual('a client with an address', SettingsProblem('Client', 'studio', '100.64.0.1:24800'), '');
   Check('a client needs an address', SettingsProblem('Client', 'studio', '') <> '');
   Check('an address has no spaces', SettingsProblem('Client', 'studio', 'a b') <> '');
   Check('an address is not an option', SettingsProblem('Client', 'studio', '--disable-crypto') <> '');

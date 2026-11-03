@@ -5,7 +5,7 @@ Build-Depends:
  debhelper-compat (=12)
 Standards-Version: 4.4.0
 Homepage: https://github.com/bryceishunter/leapdesk-kvm
-Maintainer: Bryce <bryce@trtn.io>
+Maintainer: Bryce <8810696+bryceishunter@users.noreply.github.com>
 
 Package: leapdesk-kvm
 Architecture: amd64

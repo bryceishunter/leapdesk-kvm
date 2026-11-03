@@ -354,7 +354,7 @@ begin
   else if not IsValidScreenName(Name) then
     Result := 'The screen name may use letters, digits, hyphens, underscores and dots.'
   else if (Role = 'Client') and ((Server = '') or (Pos(' ', Server) > 0) or (Server[1] = '-')) then
-    Result := 'A client needs the server''s address, for example 100.111.152.25 or 100.111.152.25:24800.';
+    Result := 'A client needs the server''s address, for example 100.64.0.1 or 100.64.0.1:24800.';
 end;
 
 function InitializeSetup(): Boolean;

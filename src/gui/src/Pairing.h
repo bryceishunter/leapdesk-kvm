@@ -49,7 +49,7 @@ QString code(const QByteArray& server_fingerprint, const QByteArray& client_fing
              const QByteArray& server_nonce, const QByteArray& client_nonce);
 // a code as people read it, such as "482 913"
 QString spaced(const QString& code);
-// the host in a server address such as 100.111.152.25:24800, [fd7a:115c::1]:24800 or desk
+// the host in a server address such as 100.64.0.1:24800, [fd7a:115c::1]:24800 or desk
 QString host_of(const QString& address);
 // what to call a paired computer: its name if known, or else, for a computer paired before names
 // were kept, the server this computer connects to if there's only that one, or its fingerprint

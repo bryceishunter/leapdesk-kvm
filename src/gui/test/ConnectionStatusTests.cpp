@@ -39,13 +39,13 @@ TEST(ConnectionStatusTests, followsTheClientsOfAServer)
     auto status = after({
         "NOTE: started server (IPv4/IPv6), waiting for clients",
         "NOTE: accepted client connection",
-        "NOTE: client \"surfacestudio\" has connected",
+        "NOTE: client \"studio\" has connected",
         "NOTE: client \"laptop\" has connected",
     });
-    EXPECT_EQ(status.connectedClients(), QStringList({"surfacestudio", "laptop"}));
-    EXPECT_TRUE(status.isConnected("SurfaceStudio"));
+    EXPECT_EQ(status.connectedClients(), QStringList({"studio", "laptop"}));
+    EXPECT_TRUE(status.isConnected("Studio"));
 
-    status.update("NOTE: client \"surfacestudio\" has disconnected");
+    status.update("NOTE: client \"studio\" has disconnected");
     EXPECT_EQ(status.connectedClients(), QStringList({"laptop"}));
     status.update("NOTE: client \"laptop\" is dead");
     EXPECT_TRUE(status.connectedClients().isEmpty());
@@ -65,7 +65,7 @@ TEST(ConnectionStatusTests, onlyAServerStartingSaysWhoIsntConnected)
 TEST(ConnectionStatusTests, aServerStartingAgainHasNoClients)
 {
     auto status = after({
-        "NOTE: client \"surfacestudio\" has connected",
+        "NOTE: client \"studio\" has connected",
         "NOTE: started server (IPv4/IPv6), waiting for clients",
     });
     EXPECT_TRUE(status.connectedClients().isEmpty());
@@ -80,40 +80,40 @@ TEST(ConnectionStatusTests, aServerNoticesAComputerItIsntPairedWith)
     });
     EXPECT_TRUE(status.unpairedAttempt());
 
-    status.update("NOTE: client \"surfacestudio\" has connected");
+    status.update("NOTE: client \"studio\" has connected");
     EXPECT_FALSE(status.unpairedAttempt());
 }
 
 TEST(ConnectionStatusTests, aServerNoticesAPairedComputerThatIsntInTheLayout)
 {
     auto status = after({
-        "NOTE: client \"surfacestudio\" has connected",
-        "NOTE: client \"SURFACESTUDIO\" unpaired this computer",
-        "NOTE: disconnecting client \"surfacestudio\"",
-        "NOTE: client \"SURFACESTUDIO\" has disconnected",
+        "NOTE: client \"studio\" has connected",
+        "NOTE: client \"STUDIO\" unpaired this computer",
+        "NOTE: disconnecting client \"studio\"",
+        "NOTE: client \"STUDIO\" has disconnected",
         "NOTE: Fingerprint matches trusted fingerprint",
         "NOTE: accepted client connection",
-        "WARNING: unrecognised client name \"SURFACESTUDIO\", check server config",
-        "NOTE: disconnecting client \"SURFACESTUDIO\"",
-        "NOTE: client \"SURFACESTUDIO\" has disconnected",
+        "WARNING: unrecognised client name \"STUDIO\", check server config",
+        "NOTE: disconnecting client \"STUDIO\"",
+        "NOTE: client \"STUDIO\" has disconnected",
     });
-    EXPECT_EQ(status.unplacedClient(), "SURFACESTUDIO");
-    EXPECT_FALSE(status.isConnected("surfacestudio"));
+    EXPECT_EQ(status.unplacedClient(), "STUDIO");
+    EXPECT_FALSE(status.isConnected("studio"));
 
     status.update("NOTE: reloaded configuration");
     EXPECT_TRUE(status.unplacedClient().isEmpty());
 
-    status.update("WARNING: unrecognised client name \"SURFACESTUDIO\", check server config");
-    status.update("NOTE: client \"surfacestudio\" has connected");
+    status.update("WARNING: unrecognised client name \"STUDIO\", check server config");
+    status.update("NOTE: client \"studio\" has connected");
     EXPECT_TRUE(status.unplacedClient().isEmpty());
-    EXPECT_TRUE(status.isConnected("SURFACESTUDIO"));
+    EXPECT_TRUE(status.isConnected("STUDIO"));
 }
 
 TEST(ConnectionStatusTests, aClientConnects)
 {
     auto status = after({
         "NOTE: started client",
-        "NOTE: connecting to '100.111.152.25': 100.111.152.25:24800",
+        "NOTE: connecting to '100.64.0.1': 100.64.0.1:24800",
     });
     EXPECT_EQ(status.client(), ConnectionStatus::Client::Connecting);
 
@@ -127,21 +127,21 @@ TEST(ConnectionStatusTests, aClientConnects)
 TEST(ConnectionStatusTests, aClientSaysWhyItCantConnect)
 {
     auto status = after({
-        "NOTE: connecting to '100.111.152.25': 100.111.152.25:24800",
+        "NOTE: connecting to '100.64.0.1': 100.64.0.1:24800",
         "WARNING: failed to connect to server: Timed out",
     });
     EXPECT_EQ(status.client(), ConnectionStatus::Client::Unreachable);
     EXPECT_EQ(status.failure(), "Timed out");
 
     // trying again doesn't hide why the last try failed
-    EXPECT_FALSE(status.update("NOTE: connecting to '100.111.152.25': 100.111.152.25:24800"));
+    EXPECT_FALSE(status.update("NOTE: connecting to '100.64.0.1': 100.64.0.1:24800"));
     EXPECT_EQ(status.client(), ConnectionStatus::Client::Unreachable);
 }
 
 TEST(ConnectionStatusTests, aClientThatIsntPairedSaysSo)
 {
     auto status = after({
-        "NOTE: connecting to '100.111.152.25': 100.111.152.25:24800",
+        "NOTE: connecting to '100.64.0.1': 100.64.0.1:24800",
         "NOTE: Fingerprint does not match trusted fingerprint",
         "ERROR: failed to verify server certificate fingerprint",
         "WARNING: failed to connect to server: failed to verify server certificate fingerprint",
@@ -149,7 +149,7 @@ TEST(ConnectionStatusTests, aClientThatIsntPairedSaysSo)
     EXPECT_EQ(status.client(), ConnectionStatus::Client::NotPaired);
 
     // and once it's paired, a different failure is told as itself
-    status.update("NOTE: connecting to '100.111.152.25': 100.111.152.25:24800");
+    status.update("NOTE: connecting to '100.64.0.1': 100.64.0.1:24800");
     status.update("WARNING: failed to connect to server: Connection refused");
     EXPECT_EQ(status.client(), ConnectionStatus::Client::Unreachable);
     EXPECT_EQ(status.failure(), "Connection refused");
@@ -158,14 +158,14 @@ TEST(ConnectionStatusTests, aClientThatIsntPairedSaysSo)
 TEST(ConnectionStatusTests, aClientTheServerDoesntKnow)
 {
     auto status = after({
-        "NOTE: connecting to '100.111.152.25': 100.111.152.25:24800",
-        "ERROR: server refused client with name \"surfacestudio\"",
+        "NOTE: connecting to '100.64.0.1': 100.64.0.1:24800",
+        "ERROR: server refused client with name \"studio\"",
         "WARNING: failed to connect to server: server refused client with our name",
     });
     EXPECT_EQ(status.client(), ConnectionStatus::Client::NameRefused);
 
     status = after({
-        "ERROR: server already has a connected client with name \"surfacestudio\"",
+        "ERROR: server already has a connected client with name \"studio\"",
         "WARNING: failed to connect to server: server already has a connected client with our name",
     });
     EXPECT_EQ(status.client(), ConnectionStatus::Client::NameTaken);

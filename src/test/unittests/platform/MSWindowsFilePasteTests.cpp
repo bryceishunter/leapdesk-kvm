@@ -325,11 +325,11 @@ TEST(MSWindowsFilePasteTests, taildrop_commandLineSendsOneFile)
     std::string name = "leapdesk-0123456789abcdef-1-report \"final\".pdf";
 
     std::vector<std::wstring> received =
-        split(MSWindowsTaildrop::command_line(program, path, name, "100.81.171.127"));
+        split(MSWindowsTaildrop::command_line(program, path, name, "100.64.0.2"));
 
     EXPECT_EQ((std::vector<std::wstring>{program, L"file", L"cp", L"--update-interval=0",
                                          L"--name=leapdesk-0123456789abcdef-1-report \"final\".pdf",
-                                         path, L"100.81.171.127:"}),
+                                         path, L"100.64.0.2:"}),
               received);
 }
 

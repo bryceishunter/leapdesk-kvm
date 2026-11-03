@@ -286,8 +286,8 @@ TEST(PairingTests, nonceIsRandom)
 
 TEST(PairingTests, hostOfAServerAddress)
 {
-    EXPECT_EQ(pairing::host_of("100.111.152.25:24800"), "100.111.152.25");
-    EXPECT_EQ(pairing::host_of(" desktop-gp522k1 "), "desktop-gp522k1");
+    EXPECT_EQ(pairing::host_of("100.64.0.1:24800"), "100.64.0.1");
+    EXPECT_EQ(pairing::host_of(" desktop-abc1234 "), "desktop-abc1234");
     EXPECT_EQ(pairing::host_of("desk:24800"), "desk");
     EXPECT_EQ(pairing::host_of("[fd7a:115c::1]:24800"), "fd7a:115c::1");
     EXPECT_EQ(pairing::host_of("fd7a:115c::1"), "fd7a:115c::1");
@@ -297,8 +297,8 @@ TEST(PairingTests, hostOfAServerAddress)
 TEST(PairingTests, aPairedComputerIsCalledByTheBestThingKnown)
 {
     const QByteArray fingerprint = QByteArray::fromHex("f3695b67d31c");
-    EXPECT_EQ(pairing::computer_label("surfacestudio", "100.111.152.25", fingerprint), "surfacestudio");
-    EXPECT_EQ(pairing::computer_label("", "100.111.152.25", fingerprint), "100.111.152.25");
+    EXPECT_EQ(pairing::computer_label("studio", "100.64.0.1", fingerprint), "studio");
+    EXPECT_EQ(pairing::computer_label("", "100.64.0.1", fingerprint), "100.64.0.1");
     EXPECT_EQ(pairing::computer_label("", "", fingerprint), "computer f3:69:5b:67");
 }
 

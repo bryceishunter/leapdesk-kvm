@@ -46,25 +46,25 @@ ServiceSettings read(const std::map<std::string, std::string>& values)
 
 ServiceSettings server()
 {
-    return read({{"Role", "Server"}, {"ScreenName", "DESKTOP-GP522K1"}, {"ProfileDir", kProfile}});
+    return read({{"Role", "Server"}, {"ScreenName", "DESKTOP-ABC1234"}, {"ProfileDir", kProfile}});
 }
 
 ServiceSettings client()
 {
-    return read({{"Role", "Client"}, {"ScreenName", "surfacestudio"},
-                 {"ServerAddress", "100.111.152.25:24800"}, {"ProfileDir", kProfile}});
+    return read({{"Role", "Client"}, {"ScreenName", "studio"},
+                 {"ServerAddress", "100.64.0.1:24800"}, {"ProfileDir", kProfile}});
 }
 
 } // namespace
 
 TEST(ServiceSettingsTests, readsAndNormalisesTheValues)
 {
-    auto settings = read({{"Role", " server "}, {"ScreenName", "DESKTOP-GP522K1"},
+    auto settings = read({{"Role", " server "}, {"ScreenName", "DESKTOP-ABC1234"},
                           {"LogLevel", "debug"}, {"ProfileDir", kProfile}});
 
     EXPECT_EQ(settings.role, "Server");
     EXPECT_TRUE(settings.is_server());
-    EXPECT_EQ(settings.screen_name, "DESKTOP-GP522K1");
+    EXPECT_EQ(settings.screen_name, "DESKTOP-ABC1234");
     EXPECT_EQ(settings.log_level, "DEBUG");
     EXPECT_EQ(settings.profile_dir, kProfile);
     EXPECT_TRUE(settings.elevate);
@@ -86,7 +86,7 @@ TEST(ServiceSettingsTests, serverCommandIsTheOneTheInstallerUsedToWrite)
     ASSERT_EQ(settings.problem(), "");
     EXPECT_EQ(settings.command(kPrograms),
               "\"C:\\Program Files\\Leapdesk\\leapdesk-server.exe\" -f --no-tray --ipc --debug NOTE"
-              " --name DESKTOP-GP522K1 --profile-dir \"C:\\Users\\A B\\AppData\\Local\\Leapdesk\""
+              " --name DESKTOP-ABC1234 --profile-dir \"C:\\Users\\A B\\AppData\\Local\\Leapdesk\""
               " --log \"C:\\Users\\A B\\AppData\\Local\\Leapdesk\\server.log\""
               " -c \"C:\\Users\\A B\\AppData\\Local\\Leapdesk\\leapdesk.sgc\"");
 }
@@ -97,8 +97,8 @@ TEST(ServiceSettingsTests, clientCommandEndsWithTheServer)
     ASSERT_EQ(settings.problem(), "");
     EXPECT_EQ(settings.command(kPrograms),
               "\"C:\\Program Files\\Leapdesk\\leapdesk-client.exe\" -f --no-tray --ipc --debug NOTE"
-              " --name surfacestudio --profile-dir \"C:\\Users\\A B\\AppData\\Local\\Leapdesk\""
-              " --log \"C:\\Users\\A B\\AppData\\Local\\Leapdesk\\client.log\" 100.111.152.25:24800");
+              " --name studio --profile-dir \"C:\\Users\\A B\\AppData\\Local\\Leapdesk\""
+              " --log \"C:\\Users\\A B\\AppData\\Local\\Leapdesk\\client.log\" 100.64.0.1:24800");
 }
 
 TEST(ServiceSettingsTests, dropsTrailingSeparatorsFromFolders)
@@ -108,7 +108,7 @@ TEST(ServiceSettingsTests, dropsTrailingSeparatorsFromFolders)
 
     EXPECT_EQ(settings.command("C:\\Program Files\\Leapdesk\\"),
               "\"C:\\Program Files\\Leapdesk\\leapdesk-server.exe\" -f --no-tray --ipc --debug NOTE"
-              " --name DESKTOP-GP522K1 --profile-dir \"D:\\Profiles\\me\""
+              " --name DESKTOP-ABC1234 --profile-dir \"D:\\Profiles\\me\""
               " --log \"D:\\Profiles\\me\\server.log\" -c \"D:\\Profiles\\me\\leapdesk.sgc\"");
 }
 
@@ -153,7 +153,7 @@ TEST(ServiceSettingsTests, clientNeedsAServerAddress)
         settings.server_address = address;
         EXPECT_NE(settings.problem(), "") << address;
     }
-    for (const char* address : {"100.111.152.25", "desktop-gp522k1:24800", "[fd7a:115c::1]:24800"}) {
+    for (const char* address : {"100.64.0.1", "desktop-abc1234:24800", "[fd7a:115c::1]:24800"}) {
         settings.server_address = address;
         EXPECT_EQ(settings.problem(), "") << address;
     }
@@ -198,8 +198,8 @@ TEST(ServiceSettingsTests, writesWhatItReads)
 
     auto again = read(values);
     EXPECT_EQ(again.role, "Client");
-    EXPECT_EQ(again.screen_name, "surfacestudio");
-    EXPECT_EQ(again.server_address, "100.111.152.25:24800");
+    EXPECT_EQ(again.screen_name, "studio");
+    EXPECT_EQ(again.server_address, "100.64.0.1:24800");
     EXPECT_EQ(again.log_level, "DEBUG");
     EXPECT_EQ(again.profile_dir, kProfile);
     EXPECT_FALSE(again.elevate);
@@ -260,8 +260,8 @@ TEST(ServiceSettingsTests, configureArgumentsSurviveTheCommandLine)
     ServiceSettings parsed;
     ASSERT_EQ(parsed.apply_arguments(arguments), "");
     EXPECT_EQ(parsed.role, "Client");
-    EXPECT_EQ(parsed.screen_name, "surfacestudio");
-    EXPECT_EQ(parsed.server_address, "100.111.152.25:24800");
+    EXPECT_EQ(parsed.screen_name, "studio");
+    EXPECT_EQ(parsed.server_address, "100.64.0.1:24800");
     EXPECT_EQ(parsed.log_level, "INFO");
     EXPECT_EQ(parsed.profile_dir, kProfile);
     EXPECT_EQ(parsed.problem(), "");
@@ -282,8 +282,8 @@ TEST(ServiceSettingsTests, windowsSplitsTheCommandIntoTheIntendedArguments)
 
     std::vector<std::wstring> expected = {
         L"C:\\Program Files\\Leapdesk\\leapdesk-client.exe", L"-f", L"--no-tray", L"--ipc",
-        L"--debug", L"NOTE", L"--name", L"surfacestudio", L"--profile-dir", L"D:\\",
-        L"--log", L"D:\\\\client.log", L"100.111.152.25:24800"};
+        L"--debug", L"NOTE", L"--name", L"studio", L"--profile-dir", L"D:\\",
+        L"--log", L"D:\\\\client.log", L"100.64.0.1:24800"};
     EXPECT_EQ(split, expected);
 }
 #endif

@@ -21,7 +21,7 @@
 
 namespace {
 
-// the name in a line such as: client "surfacestudio" has connected
+// the name in a line such as: client "studio" has connected
 QString quotedName(const QString& line, const QString& after)
 {
     static const QRegularExpression quoted(QStringLiteral("\"([^\"]*)\""));

@@ -193,10 +193,10 @@ TEST(FileClipTests, isValidPasteRequest)
 
 TEST(FileClipTests, isValidPasteAddress)
 {
-    EXPECT_TRUE(is_valid_paste_address("100.81.171.127"));
+    EXPECT_TRUE(is_valid_paste_address("100.64.0.2"));
     EXPECT_TRUE(is_valid_paste_address("fd7a:115c:a1e0::1"));
-    EXPECT_TRUE(is_valid_paste_address("surfacestudio"));
-    EXPECT_TRUE(is_valid_paste_address("desktop-gp522k1.tail1234.ts.net"));
+    EXPECT_TRUE(is_valid_paste_address("studio"));
+    EXPECT_TRUE(is_valid_paste_address("desktop-abc1234.tail1234.ts.net"));
     EXPECT_FALSE(is_valid_paste_address(""));
     EXPECT_FALSE(is_valid_paste_address("-evil"));
     EXPECT_FALSE(is_valid_paste_address("a b"));
@@ -229,7 +229,7 @@ TEST(FileClipTests, protocol_messagesWithSeveralStringsRoundTrip)
     // while %s came last in a message
     BufferStream stream;
     std::string request = "0123456789abcdef", file_id = "fedcba9876543210";
-    std::string address = "100.81.171.127", detail = "sending 2 file(s)";
+    std::string address = "100.64.0.2", detail = "sending 2 file(s)";
     ProtocolUtil::writef(&stream, kMsgQFilePaste, &request, &file_id, &address);
     ProtocolUtil::writef(&stream, kMsgDFileStatus, &request, 1u, &detail);
 

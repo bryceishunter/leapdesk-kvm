@@ -23,21 +23,21 @@ namespace {
 
 // the fields that matter, as `tailscale status --json` gives them
 const char kStatus[] = R"({
-  "Self": { "HostName": "Me", "DNSName": "me.tailcba81.ts.net." },
+  "Self": { "HostName": "Me", "DNSName": "me.tail1234.ts.net." },
   "Peer": {
-    "key1": { "HostName": "phone", "DNSName": "phone.tailcba81.ts.net.",
+    "key1": { "HostName": "phone", "DNSName": "phone.tail1234.ts.net.",
               "TailscaleIPs": ["100.81.175.81", "fd7a:115c:a1e0::1"],
               "Online": false, "Active": false, "CurAddr": "", "Relay": "tor" },
-    "key2": { "HostName": "Surface Studio", "DNSName": "surfacestudio.tailcba81.ts.net.",
-              "TailscaleIPs": ["100.81.171.127", "fd7a:115c:a1e0::2"],
-              "Online": true, "Active": true, "CurAddr": "192.168.0.45:41641", "Relay": "tor" },
-    "key3": { "HostName": "laptop", "DNSName": "laptop.tailcba81.ts.net.",
+    "key2": { "HostName": "Studio PC", "DNSName": "studio.tail1234.ts.net.",
+              "TailscaleIPs": ["100.64.0.2", "fd7a:115c:a1e0::2"],
+              "Online": true, "Active": true, "CurAddr": "192.168.1.20:41641", "Relay": "tor" },
+    "key3": { "HostName": "laptop", "DNSName": "laptop.tail1234.ts.net.",
               "TailscaleIPs": ["fd7a:115c:a1e0::3", "100.92.14.33"],
               "Online": true, "Active": true, "CurAddr": "", "Relay": "ord" },
-    "key4": { "HostName": "desk", "DNSName": "desk.tailcba81.ts.net.",
-              "TailscaleIPs": ["100.111.152.25"],
+    "key4": { "HostName": "desk", "DNSName": "desk.tail1234.ts.net.",
+              "TailscaleIPs": ["100.64.0.1"],
               "Online": true, "Active": false, "CurAddr": "", "Relay": "tor" },
-    "key5": { "HostName": "v6only", "DNSName": "v6only.tailcba81.ts.net.",
+    "key5": { "HostName": "v6only", "DNSName": "v6only.tail1234.ts.net.",
               "TailscaleIPs": ["fd7a:115c:a1e0::5"], "Online": true }
   }
 })";
@@ -51,7 +51,7 @@ TEST(TailscalePeersTests, readsOnlineDevicesFirstThenByName)
     ASSERT_EQ(peers.size(), 4);
     EXPECT_EQ(peers[0].name.toStdString(), "desk");
     EXPECT_EQ(peers[1].name.toStdString(), "laptop");
-    EXPECT_EQ(peers[2].name.toStdString(), "surfacestudio");
+    EXPECT_EQ(peers[2].name.toStdString(), "studio");
     EXPECT_EQ(peers[3].name.toStdString(), "phone");
 }
 
@@ -66,7 +66,7 @@ TEST(TailscalePeersTests, tellsThePathApart)
     auto peers = parse_tailscale_status(kStatus);
 
     EXPECT_EQ(peers[2].path, TailscalePeer::Path::Direct);
-    EXPECT_EQ(peers[2].direct_address.toStdString(), "192.168.0.45:41641");
+    EXPECT_EQ(peers[2].direct_address.toStdString(), "192.168.1.20:41641");
 
     EXPECT_EQ(peers[1].path, TailscalePeer::Path::Relayed);
     EXPECT_EQ(peers[1].relay.toStdString(), "ord");
@@ -98,11 +98,11 @@ TEST(TailscalePeersTests, findsADeviceByAddressOrName)
         return peer ? peer->name.toStdString() : std::string("none");
     };
 
-    EXPECT_EQ(name_of("100.111.152.25"), "desk");
-    EXPECT_EQ(name_of("100.111.152.25:24800"), "desk");
+    EXPECT_EQ(name_of("100.64.0.1"), "desk");
+    EXPECT_EQ(name_of("100.64.0.1:24800"), "desk");
     EXPECT_EQ(name_of("desk"), "desk");
     EXPECT_EQ(name_of("DESK:24800"), "desk");
-    EXPECT_EQ(name_of("surfacestudio.tailcba81.ts.net"), "surfacestudio");
+    EXPECT_EQ(name_of("studio.tail1234.ts.net"), "studio");
     EXPECT_EQ(name_of("192.168.0.9"), "none");
     EXPECT_EQ(name_of(""), "none");
 }

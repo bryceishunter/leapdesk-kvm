@@ -409,8 +409,8 @@ TEST_F(NetworkTests, filePaste_filesCopiedOnClientArePastedOnServer)
 
     // when the server has the files on its clipboard, the user pastes them on
     // the server: once with the id of an earlier copy, then with the right one
-    FilePasteRequest stale{"00000000000000aa", "0000000000000000", "100.81.171.127"};
-    FilePasteRequest paste{"00000000000000bb", clip.id, "100.81.171.127"};
+    FilePasteRequest stale{"00000000000000aa", "0000000000000000", "100.64.0.2"};
+    FilePasteRequest paste{"00000000000000bb", clip.id, "100.64.0.2"};
     ON_CALL(primaryClient, setClipboard(_, _))
         .WillByDefault(Invoke([&](ClipboardID id, const IClipboard* clipboard) {
             clipboard->open(0);
@@ -522,7 +522,7 @@ TEST_F(NetworkTests, filePaste_cancelOnTheServerStopsTheClientSending)
                            create_event_data<IScreen::ClipboardInfo>(
                                IScreen::ClipboardInfo{kClipboardClipboard, 0}));
     });
-    FilePasteRequest paste{"00000000000000cc", clip.id, "100.81.171.127"};
+    FilePasteRequest paste{"00000000000000cc", clip.id, "100.64.0.2"};
     ON_CALL(primaryClient, setClipboard(_, _))
         .WillByDefault(Invoke([&](ClipboardID id, const IClipboard* clipboard) {
             clipboard->open(0);
